@@ -60,6 +60,19 @@ public partial class MainWindow : Window
             await vm.InstallModpackLoaderAsync();
     }
 
+    private async void OnDeploySourceClick(object? sender, RoutedEventArgs e)
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select a source modpack folder to compile + deploy",
+            AllowMultiple = false,
+        });
+
+        var path = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+        if (!string.IsNullOrEmpty(path) && Vm is { } vm)
+            await vm.DeploySourceAsync(path);
+    }
+
     private async void OnUninstallClick(object? sender, RoutedEventArgs e)
     {
         if (Vm?.Selected is not { } mod)

@@ -18,6 +18,7 @@ public sealed class MainViewModel : ReactiveObject
     private readonly ModCatalog _catalog = new();
     private readonly ModEnableService _enableService = new();
     private readonly ModInstallService _installService = new();
+    private readonly ModDeployService _deployService = new();
     private readonly JiangyuLoaderInstaller _jiangyu = new();
     private readonly MelonLoaderInstaller _melonLoader = new();
 
@@ -318,6 +319,24 @@ public sealed class MainViewModel : ReactiveObject
         {
             Status = $"Install failed: {ex.Message}";
         }
+    }
+
+    /// <summary>Compile (if needed) and deploy a source modpack folder, then rescan.</summary>
+    public async Task DeploySourceAsync(string sourceDir)
+    {
+        var progress = new Progress<string>(s => Status = s);
+        try
+        {
+            // Off the UI thread — compilation can be heavy.
+            await Task.Run(() => _deployService.DeployAsync(sourceDir, progress));
+        }
+        catch (Exception ex)
+        {
+            Status = $"Deploy failed: {ex.Message}";
+            return;
+        }
+
+        Refresh();
     }
 
     /// <summary>Delete the selected mod from disk, then rescan.</summary>
