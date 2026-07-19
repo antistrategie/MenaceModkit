@@ -3,7 +3,7 @@
         x:Class="Menace.ModManager.Views.MainWindow"
         Width="980" Height="680"
         Title="Menace Mod Manager">
-  <Grid>
+  <Grid DragDrop.AllowDrop="True">
 
     <!-- Main content (disabled while a long operation runs) -->
     <DockPanel Margin="12" IsEnabled="{Binding NotBusy}">

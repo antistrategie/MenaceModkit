@@ -18,6 +18,11 @@ public sealed class ModInstallService
     private static readonly string[] ArchiveExtensions =
         { ".zip", ".7z", ".rar", ".tar", ".gz", ".tgz", ".bz2" };
 
+    // Author project/build artefacts that sometimes get zipped alongside a mod. These must
+    // not be deployed — MelonLoader scans Mods/ recursively, so stray bin/obj DLLs would be
+    // loaded as duplicate mods. Stripped at the mod-folder root only.
+    private static readonly string[] ExcludedDirs = { "src", "build", "obj", "bin", ".git", ".vs" };
+
     private readonly IModkitConfig _config;
 
     public ModInstallService(IModkitConfig? config = null) => _config = config ?? ModkitConfig.Current;
@@ -76,7 +81,7 @@ public sealed class ModInstallService
             throw new InvalidOperationException("Install the mod from a folder outside the game's Mods/ directory.");
 
         ClearTarget(target);
-        CopyDirectory(sourceDir, target);
+        CopyDirectory(sourceDir, target, isRoot: true);
         return target;
     }
 
@@ -168,7 +173,7 @@ public sealed class ModInstallService
     {
         ClearTarget(target);
         // Copy (not move) so it works across volumes and leaves the temp dir for cleanup.
-        CopyDirectory(sourceDir, target);
+        CopyDirectory(sourceDir, target, isRoot: true);
         return target;
     }
 
@@ -192,14 +197,19 @@ public sealed class ModInstallService
         }
     }
 
-    private static void CopyDirectory(string source, string dest)
+    private static void CopyDirectory(string source, string dest, bool isRoot)
     {
         Directory.CreateDirectory(dest);
 
         foreach (var file in Directory.GetFiles(source))
-            File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), overwrite: false);
+            File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), overwrite: true);
 
         foreach (var dir in Directory.GetDirectories(source))
-            CopyDirectory(dir, Path.Combine(dest, Path.GetFileName(dir)));
+        {
+            var dirName = Path.GetFileName(dir);
+            if (isRoot && ExcludedDirs.Contains(dirName, StringComparer.OrdinalIgnoreCase))
+                continue;
+            CopyDirectory(dir, Path.Combine(dest, dirName), isRoot: false);
+        }
     }
 }

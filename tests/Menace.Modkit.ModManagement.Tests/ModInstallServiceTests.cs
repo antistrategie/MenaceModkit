@@ -84,6 +84,29 @@ public sealed class ModInstallServiceTests : IDisposable
     }
 
     [Fact]
+    public void Install_ZipWithSourceTree_StripsSrcBuildJunk()
+    {
+        // A raw MelonMod zipped with its whole project: "Mod/Mod.dll" + "Mod/src/{bin,obj,cs}".
+        var stage = Path.Combine(_gameDir, "stage", "Mount Up");
+        Directory.CreateDirectory(Path.Combine(stage, "src", "bin", "Release"));
+        Directory.CreateDirectory(Path.Combine(stage, "src", "obj"));
+        File.WriteAllText(Path.Combine(stage, "MountUp.dll"), "mod");
+        File.WriteAllText(Path.Combine(stage, "src", "MountUpMod.cs"), "// src");
+        File.WriteAllText(Path.Combine(stage, "src", "bin", "Release", "MountUpMod.dll"), "dupe");
+        File.WriteAllText(Path.Combine(stage, "src", "obj", "MountUpMod.dll"), "dupe");
+
+        var zipPath = Path.Combine(_gameDir, "MountUp.zip");
+        ZipFile.CreateFromDirectory(Path.Combine(_gameDir, "stage"), zipPath);
+
+        var installed = new ModInstallService(_config).Install(zipPath);
+
+        Assert.Equal(Path.Combine(_modsDir, "Mount Up"), installed);
+        Assert.True(File.Exists(Path.Combine(installed, "MountUp.dll")));
+        // The project tree (and its duplicate build-output DLLs) must not be deployed.
+        Assert.False(Directory.Exists(Path.Combine(installed, "src")));
+    }
+
+    [Fact]
     public void Uninstall_RemovesFromDisk()
     {
         var packDir = Path.Combine(_modsDir, "Gone");

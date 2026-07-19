@@ -1,4 +1,5 @@
 using Avalonia.Controls;
+using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
@@ -9,9 +10,35 @@ namespace Menace.ModManager.Views;
 
 public partial class MainWindow : Window
 {
-    public MainWindow() => AvaloniaXamlLoader.Load(this);
+    public MainWindow()
+    {
+        AvaloniaXamlLoader.Load(this);
+        AddHandler(DragDrop.DragOverEvent, OnDragOver);
+        AddHandler(DragDrop.DropEvent, OnDrop);
+    }
 
     private MainViewModel? Vm => DataContext as MainViewModel;
+
+    private static void OnDragOver(object? sender, DragEventArgs e)
+        => e.DragEffects = e.Data.Contains(DataFormats.Files) ? DragDropEffects.Copy : DragDropEffects.None;
+
+    private async void OnDrop(object? sender, DragEventArgs e)
+    {
+        // Ignore drops while an operation is already running.
+        if (Vm is not { IsBusy: false } vm)
+            return;
+
+        var files = e.Data.GetFiles();
+        if (files is null)
+            return;
+
+        foreach (var item in files)
+        {
+            var path = item.TryGetLocalPath();
+            if (!string.IsNullOrEmpty(path))
+                await vm.AddPathAsync(path);
+        }
+    }
 
     private void OnRefreshClick(object? sender, RoutedEventArgs e) => Vm?.Refresh();
 

@@ -334,6 +334,19 @@ public sealed class MainViewModel : ReactiveObject
         Refresh();
     }
 
+    /// <summary>
+    /// Handle an added or dropped path: a modpack folder (possibly with C# sources) goes
+    /// through the compiling deploy path; archives, DLLs and raw mod folders are installed.
+    /// </summary>
+    public Task AddPathAsync(string path)
+    {
+        if (System.IO.Directory.Exists(path)
+            && System.IO.File.Exists(System.IO.Path.Combine(path, "modpack.json")))
+            return DeploySourceAsync(path);
+
+        return InstallAsync(path);
+    }
+
     /// <summary>Install (or update) a mod from an archive/folder/.dll.</summary>
     public Task InstallAsync(string sourcePath) =>
         ExecuteAsync(
