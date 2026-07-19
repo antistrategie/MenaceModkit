@@ -72,17 +72,7 @@ public sealed class ModInstallService
     private static string InstallFolder(string sourceDir, string modsPath)
     {
         var name = Path.GetFileName(sourceDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var target = Path.Combine(modsPath, name);
-
-        // Installing a folder that IS (or contains) the target would delete the source.
-        var src = Path.GetFullPath(sourceDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        var tgt = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (src.StartsWith(tgt, StringComparison.Ordinal) || tgt.StartsWith(src, StringComparison.Ordinal))
-            throw new InvalidOperationException("Install the mod from a folder outside the game's Mods/ directory.");
-
-        ClearTarget(target);
-        CopyDirectory(sourceDir, target, isRoot: true);
-        return target;
+        return PlaceNamed(sourceDir, modsPath, name);
     }
 
     private static string InstallDll(string dllPath, string modsPath)
@@ -92,11 +82,31 @@ public sealed class ModInstallService
         return target;
     }
 
-    /// <summary>
-    /// Extract an archive to a temp dir, work out what the mod is (a modpack.json/jiangyu.json
-    /// folder, a wrapper folder, or a bare .dll), then place it into <c>Mods/</c>.
-    /// </summary>
     private static string InstallArchive(string archivePath, string modsPath)
+    {
+        using var extracted = ExtractArchiveToTemp(archivePath);
+        if (extracted.BareDll != null)
+            return InstallDll(extracted.BareDll, modsPath);
+        return PlaceNamed(extracted.ModRoot!, modsPath, extracted.Name);
+    }
+
+    /// <summary>
+    /// Copy an already-resolved mod folder into <c>Mods/&lt;name&gt;</c> (used by the caller after
+    /// inspecting extracted archive contents). Strips source/build artefacts.
+    /// </summary>
+    public string InstallFrom(string modRootDir, string name)
+    {
+        var modsPath = ModsPath ?? throw new InvalidOperationException("Game install path is not set.");
+        Directory.CreateDirectory(modsPath);
+        return PlaceNamed(modRootDir, modsPath, name);
+    }
+
+    /// <summary>
+    /// Extract an archive to a temp directory and resolve what the mod is: a folder to install
+    /// (<see cref="ExtractedArchive.ModRoot"/>) or a single loose DLL
+    /// (<see cref="ExtractedArchive.BareDll"/>). The caller disposes the result to clean up.
+    /// </summary>
+    public static ExtractedArchive ExtractArchiveToTemp(string archivePath)
     {
         var temp = Path.Combine(Path.GetTempPath(), "mm-install-" + Guid.NewGuid().ToString("N"));
         try
@@ -106,38 +116,28 @@ public sealed class ModInstallService
             var rootFiles = Directory.GetFiles(temp);
             var rootDirs = Directory.GetDirectories(temp);
 
-            // 1) Manifest at the archive root → install the whole extracted tree as a folder.
-            if (HasModManifest(temp))
-                return PlaceDirectory(temp, Path.Combine(modsPath, ArchiveBaseName(archivePath)));
+            // A single wrapper folder (the common "name/…" layout) — its name is authoritative.
+            if (rootDirs.Length == 1 && rootFiles.Length == 0 && !HasModManifest(temp))
+                return new ExtractedArchive(temp, rootDirs[0], null, Path.GetFileName(rootDirs[0]));
 
-            // 2) A single wrapper folder (the common "name/…" publish layout).
-            if (rootDirs.Length == 1 && rootFiles.Length == 0)
-                return PlaceDirectory(rootDirs[0], Path.Combine(modsPath, Path.GetFileName(rootDirs[0])));
-
-            // 3) A bare .dll (a raw MelonMod zipped up) → install it loose.
+            // A bare .dll — a raw MelonMod zipped up.
             if (rootDirs.Length == 0 && rootFiles.Length == 1 &&
                 rootFiles[0].EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
-            {
-                var target = PrepareTarget(modsPath, Path.GetFileName(rootFiles[0]));
-                File.Copy(rootFiles[0], target, overwrite: true);
-                return target;
-            }
+                return new ExtractedArchive(temp, null, rootFiles[0], Path.GetFileName(rootFiles[0]));
 
-            // 4) Fallback: install the whole extracted tree as a folder named after the archive.
-            return PlaceDirectory(temp, Path.Combine(modsPath, ArchiveBaseName(archivePath)));
+            // Manifest at the root, or anything else → the whole tree, named after the archive.
+            return new ExtractedArchive(temp, temp, null, ArchiveBaseName(archivePath));
         }
-        finally
+        catch
         {
-            if (Directory.Exists(temp))
-            {
-                try { Directory.Delete(temp, recursive: true); } catch { /* best effort */ }
-            }
+            try { if (Directory.Exists(temp)) Directory.Delete(temp, recursive: true); } catch { }
+            throw;
         }
     }
 
     // ---- helpers ----
 
-    private static bool IsArchive(string path) =>
+    public static bool IsArchive(string path) =>
         ArchiveExtensions.Any(e => path.EndsWith(e, StringComparison.OrdinalIgnoreCase));
 
     private static bool HasModManifest(string dir) =>
@@ -169,10 +169,19 @@ public sealed class ModInstallService
             File.Delete(target);
     }
 
-    private static string PlaceDirectory(string sourceDir, string target)
+    /// <summary>Copy a mod folder into <c>Mods/&lt;name&gt;</c> (clean replace, junk stripped, guarded).</summary>
+    private static string PlaceNamed(string sourceDir, string modsPath, string name)
     {
+        var target = Path.Combine(modsPath, name);
+
+        // Copying a folder that IS (or contains) the target would delete the source.
+        var src = Path.GetFullPath(sourceDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var tgt = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (src.StartsWith(tgt, StringComparison.Ordinal) || tgt.StartsWith(src, StringComparison.Ordinal))
+            throw new InvalidOperationException("Install the mod from a location outside the game's Mods/ directory.");
+
         ClearTarget(target);
-        // Copy (not move) so it works across volumes and leaves the temp dir for cleanup.
+        // Copy (not move) so it works across volumes and leaves any temp dir for cleanup.
         CopyDirectory(sourceDir, target, isRoot: true);
         return target;
     }
@@ -211,5 +220,33 @@ public sealed class ModInstallService
                 continue;
             CopyDirectory(dir, Path.Combine(dest, dirName), isRoot: false);
         }
+    }
+}
+
+/// <summary>
+/// A mod archive extracted to a temp directory. Either <see cref="ModRoot"/> (a folder to
+/// install) or <see cref="BareDll"/> (a single loose DLL) is set. Dispose to delete the temp.
+/// </summary>
+public sealed class ExtractedArchive : IDisposable
+{
+    internal ExtractedArchive(string tempDir, string? modRoot, string? bareDll, string name)
+    {
+        TempDir = tempDir;
+        ModRoot = modRoot;
+        BareDll = bareDll;
+        Name = name;
+    }
+
+    public string TempDir { get; }
+    public string? ModRoot { get; }
+    public string? BareDll { get; }
+
+    /// <summary>Suggested install folder name (wrapper folder name, or the archive base name).</summary>
+    public string Name { get; }
+
+    public void Dispose()
+    {
+        try { if (Directory.Exists(TempDir)) Directory.Delete(TempDir, recursive: true); }
+        catch { /* best effort */ }
     }
 }

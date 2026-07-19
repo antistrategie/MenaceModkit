@@ -335,31 +335,53 @@ public sealed class MainViewModel : ReactiveObject
     }
 
     /// <summary>
-    /// Handle an added or dropped path: a modpack folder (possibly with C# sources) goes
-    /// through the compiling deploy path; archives, DLLs and raw mod folders are installed.
+    /// The single install entry (button + drag-drop). Handles a mod archive, a folder, or a
+    /// bare .dll, and works out for itself whether the mod needs compiling: a modpack with C#
+    /// sources is compiled and deployed; everything else is copied straight in.
     /// </summary>
-    public Task AddPathAsync(string path)
+    public Task InstallAsync(string path)
     {
-        if (System.IO.Directory.Exists(path)
-            && System.IO.File.Exists(System.IO.Path.Combine(path, "modpack.json")))
-            return DeploySourceAsync(path);
-
-        return InstallAsync(path);
-    }
-
-    /// <summary>Install (or update) a mod from an archive/folder/.dll.</summary>
-    public Task InstallAsync(string sourcePath) =>
-        ExecuteAsync(
-            $"Installing {System.IO.Path.GetFileName(sourcePath)}…",
-            () => Task.Run(() => _installService.Install(sourcePath)));
-
-    /// <summary>Compile (if needed) and deploy a source modpack folder.</summary>
-    public Task DeploySourceAsync(string sourceDir)
-    {
+        // Progress must be created on the UI thread so its callbacks marshal Status back.
         var progress = new Progress<string>(s => Status = s);
         return ExecuteAsync(
-            "Deploying source modpack…",
-            () => Task.Run(() => _deployService.DeployAsync(sourceDir, progress)));
+            $"Installing {System.IO.Path.GetFileName(path)}…",
+            () => Task.Run(() => InstallCoreAsync(path, progress)));
+    }
+
+    private async Task InstallCoreAsync(string path, IProgress<string> progress)
+    {
+        if (ModInstallService.IsArchive(path))
+        {
+            using var extracted = ModInstallService.ExtractArchiveToTemp(path);
+            if (extracted.BareDll != null)
+                _installService.Install(extracted.BareDll);
+            else
+                await RouteModDirAsync(extracted.ModRoot!, extracted.Name, progress);
+        }
+        else if (System.IO.Directory.Exists(path))
+        {
+            var name = System.IO.Path.GetFileName(
+                path.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
+            await RouteModDirAsync(path, name, progress);
+        }
+        else if (path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+        {
+            _installService.Install(path);
+        }
+        else
+        {
+            throw new NotSupportedException(
+                $"Can't install '{System.IO.Path.GetFileName(path)}'. Add a mod archive (.zip/.7z/…) or a DLL.");
+        }
+    }
+
+    private async Task RouteModDirAsync(string modDir, string name, IProgress<string> progress)
+    {
+        // A modpack goes through deploy (which compiles only if needed); anything else is a copy.
+        if (System.IO.File.Exists(System.IO.Path.Combine(modDir, "modpack.json")))
+            await _deployService.DeployAsync(modDir, progress);
+        else
+            _installService.InstallFrom(modDir, name);
     }
 
     /// <summary>Delete the selected mod from disk.</summary>

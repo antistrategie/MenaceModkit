@@ -115,6 +115,23 @@ public sealed class ModDeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Deploy_ModpackWithSourcesButPrebuiltDll_SkipsCompile()
+    {
+        // Has C# sources AND a prebuilt DLL → must copy, not recompile (a recompile would throw
+        // here since the test env has no game reference assemblies).
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Prebuilt"",""code"":{""sources"":[""src/Plugin.cs""]}}");
+        Directory.CreateDirectory(Path.Combine(_sourceDir, "dlls"));
+        File.WriteAllText(Path.Combine(_sourceDir, "dlls", "Prebuilt.dll"), "built");
+        Directory.CreateDirectory(Path.Combine(_sourceDir, "src"));
+        File.WriteAllText(Path.Combine(_sourceDir, "src", "Plugin.cs"), "// source");
+
+        var target = await new ModDeployService(_config).DeployAsync(_sourceDir);
+
+        Assert.True(File.Exists(Path.Combine(target, "dlls", "Prebuilt.dll")));
+        Assert.False(Directory.Exists(Path.Combine(target, "src")));
+    }
+
+    [Fact]
     public async Task Deploy_ReplacesExistingInstall()
     {
         WriteManifest(@"{""manifestVersion"":2,""name"":""Dup"",""version"":""1.0.0""}");

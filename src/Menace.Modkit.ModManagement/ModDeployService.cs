@@ -49,8 +49,10 @@ public sealed class ModDeployService
         // Never let a manifest-supplied name escape Mods/ (it gets Directory.Delete'd below).
         var name = SanitiseModName(manifest.Name) ?? folderName;
 
-        // 1. Compile the mod's C# source, if it has any.
-        if (manifest.Code.HasAnySources)
+        // 1. Compile the mod's C# source, but only if it has sources AND isn't already built
+        //    (a distributed modpack may ship its compiled DLL, in which case a copy is enough
+        //    and a recompile would just risk failing on missing references).
+        if (manifest.Code.HasAnySources && !HasBuiltOutput(sourceDir, manifest))
         {
             progress?.Report($"Compiling {name}…");
             var result = await _compiler.CompileModpackAsync(manifest, ct).ConfigureAwait(false);
@@ -88,6 +90,18 @@ public sealed class ModDeployService
 
         progress?.Report($"Deployed {name}");
         return target;
+    }
+
+    /// <summary>True if the modpack already carries a compiled DLL (dlls/, build/, or prebuilt).</summary>
+    private static bool HasBuiltOutput(string dir, ModpackManifest manifest)
+    {
+        foreach (var sub in new[] { "dlls", "build" })
+        {
+            var p = Path.Combine(dir, sub);
+            if (Directory.Exists(p) && Directory.EnumerateFiles(p, "*.dll").Any())
+                return true;
+        }
+        return manifest.Code.PrebuiltDlls.Any(rel => File.Exists(Path.Combine(dir, rel)));
     }
 
     private static void CopyTree(string source, string dest, bool isRoot)

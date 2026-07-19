@@ -36,7 +36,7 @@ public partial class MainWindow : Window
         {
             var path = item.TryGetLocalPath();
             if (!string.IsNullOrEmpty(path))
-                await vm.AddPathAsync(path);
+                await vm.InstallAsync(path);
         }
     }
 
@@ -50,7 +50,7 @@ public partial class MainWindow : Window
             Vm?.Toggle(mod);
     }
 
-    private async void OnAddModClick(object? sender, RoutedEventArgs e)
+    private async void OnInstallClick(object? sender, RoutedEventArgs e)
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
@@ -87,19 +87,6 @@ public partial class MainWindow : Window
     {
         if (Vm is { } vm)
             await vm.InstallModpackLoaderAsync();
-    }
-
-    private async void OnDeploySourceClick(object? sender, RoutedEventArgs e)
-    {
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = "Select a source modpack folder to compile + deploy",
-            AllowMultiple = false,
-        });
-
-        var path = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
-        if (!string.IsNullOrEmpty(path) && Vm is { } vm)
-            await vm.DeploySourceAsync(path);
     }
 
     private async void OnUninstallClick(object? sender, RoutedEventArgs e)
