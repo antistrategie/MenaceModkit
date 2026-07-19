@@ -24,7 +24,7 @@
             <TextBlock Text="{Binding MelonLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" />
             <ComboBox ItemsSource="{Binding MelonLoaderVersions}" SelectedItem="{Binding SelectedMelonLoaderVersion}" MinWidth="130" />
           </StackPanel>
-          <Button Grid.Row="0" Grid.Column="2" Content="Get" Click="OnInstallMelonLoaderClick" />
+          <Button Grid.Row="0" Grid.Column="2" Content="Get" Click="OnInstallMelonLoaderClick" IsEnabled="{Binding CanGetMelonLoader}" />
 
           <TextBlock Grid.Row="1" Grid.Column="0" Text="Modpack Loader" VerticalAlignment="Center" Margin="0,8,0,0" />
           <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ModpackLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" Margin="0,8,0,0" />
@@ -35,7 +35,7 @@
             <TextBlock Text="{Binding JiangyuLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" />
             <ComboBox ItemsSource="{Binding JiangyuVersions}" SelectedItem="{Binding SelectedJiangyuVersion}" MinWidth="130" />
           </StackPanel>
-          <Button Grid.Row="2" Grid.Column="2" Content="Get" Click="OnGetJiangyuClick" Margin="0,8,0,0" />
+          <Button Grid.Row="2" Grid.Column="2" Content="Get" Click="OnGetJiangyuClick" Margin="0,8,0,0" IsEnabled="{Binding CanGetJiangyu}" />
 
         </Grid>
       </StackPanel>

@@ -32,7 +32,11 @@ public sealed class MainViewModel : ReactiveObject
     public string? SelectedMelonLoaderVersion
     {
         get => _selectedMelonLoaderVersion;
-        set => this.RaiseAndSetIfChanged(ref _selectedMelonLoaderVersion, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedMelonLoaderVersion, value);
+            this.RaisePropertyChanged(nameof(CanGetMelonLoader));
+        }
     }
 
     /// <summary>Jiangyu loader versions offered in the picker (newest first, tagged "(latest)").</summary>
@@ -42,8 +46,19 @@ public sealed class MainViewModel : ReactiveObject
     public string? SelectedJiangyuVersion
     {
         get => _selectedJiangyuVersion;
-        set => this.RaiseAndSetIfChanged(ref _selectedJiangyuVersion, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedJiangyuVersion, value);
+            this.RaisePropertyChanged(nameof(CanGetJiangyu));
+        }
     }
+
+    private string? _melonLoaderInstalledVersion;
+    private string? _jiangyuInstalledVersion;
+
+    /// <summary>Get is enabled only when the picked version differs from what's installed.</summary>
+    public bool CanGetMelonLoader => !SameVersion(_melonLoaderInstalledVersion, NormalizeVersion(SelectedMelonLoaderVersion));
+    public bool CanGetJiangyu => !SameVersion(_jiangyuInstalledVersion, NormalizeVersion(SelectedJiangyuVersion));
 
     private string _status = string.Empty;
     public string Status
@@ -221,20 +236,46 @@ public sealed class MainViewModel : ReactiveObject
         if (string.IsNullOrEmpty(gamePath))
         {
             MelonLoaderStatus = ModpackLoaderStatus = JiangyuLoaderStatus = "game not located";
-            return;
+            _melonLoaderInstalledVersion = _jiangyuInstalledVersion = null;
+        }
+        else
+        {
+            // MelonLoader lives at the game root (version.dll + MelonLoader/), not in Mods/,
+            // so query the installer rather than the scanned list.
+            var installer = new ModLoaderInstaller(gamePath);
+            var installed = installer.IsMelonLoaderInstalled();
+            var melonVersion = installer.GetInstalledMelonLoaderVersion();
+            _melonLoaderInstalledVersion = installed ? melonVersion : null;
+            MelonLoaderStatus = installed
+                ? $"installed{(string.IsNullOrEmpty(melonVersion) ? "" : $" {melonVersion}")}"
+                : "not installed";
+
+            // The other two appear in the scan as infrastructure DLLs in Mods/.
+            ModpackLoaderStatus = DescribeInstalled("Menace.ModpackLoader.dll");
+            JiangyuLoaderStatus = DescribeInstalled("Jiangyu.Loader.dll");
+            _jiangyuInstalledVersion = Mods
+                .FirstOrDefault(m => string.Equals(m.Id, "Jiangyu.Loader.dll", StringComparison.OrdinalIgnoreCase))
+                ?.Version;
         }
 
-        // MelonLoader lives at the game root (version.dll + MelonLoader/), not in Mods/,
-        // so query the installer rather than the scanned list.
-        var installer = new ModLoaderInstaller(gamePath);
-        var melonVersion = installer.GetInstalledMelonLoaderVersion();
-        MelonLoaderStatus = installer.IsMelonLoaderInstalled()
-            ? $"installed{(string.IsNullOrEmpty(melonVersion) ? "" : $" {melonVersion}")}"
-            : "not installed";
+        this.RaisePropertyChanged(nameof(CanGetMelonLoader));
+        this.RaisePropertyChanged(nameof(CanGetJiangyu));
+    }
 
-        // The other two appear in the scan as infrastructure DLLs in Mods/.
-        ModpackLoaderStatus = DescribeInstalled("Menace.ModpackLoader.dll");
-        JiangyuLoaderStatus = DescribeInstalled("Jiangyu.Loader.dll");
+    /// <summary>
+    /// True when an installed version and a release tag refer to the same release, tolerating
+    /// a leading "v", git-describe suffixes ("1.2.3-8-g…"), and a trailing ".0" segment.
+    /// </summary>
+    private static bool SameVersion(string? installed, string? tag)
+    {
+        if (string.IsNullOrEmpty(installed) || string.IsNullOrEmpty(tag))
+            return false;
+
+        var a = installed.TrimStart('v', 'V').Split('-')[0];
+        var b = tag.TrimStart('v', 'V').Split('-')[0];
+        return a == b
+            || a.StartsWith(b + ".", StringComparison.Ordinal)
+            || b.StartsWith(a + ".", StringComparison.Ordinal);
     }
 
     private string DescribeInstalled(string dllId)
