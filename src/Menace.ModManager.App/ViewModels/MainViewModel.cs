@@ -23,20 +23,22 @@ public sealed class MainViewModel : ReactiveObject
 
     public ObservableCollection<ManagedMod> Mods { get; } = new();
 
-    /// <summary>MelonLoader versions offered in the picker ("latest" first, then release tags).</summary>
-    public ObservableCollection<string> MelonLoaderVersions { get; } = new() { "latest" };
+    private const string LatestSuffix = " (latest)";
 
-    private string? _selectedMelonLoaderVersion = "latest";
+    /// <summary>MelonLoader versions offered in the picker (newest first, tagged "(latest)").</summary>
+    public ObservableCollection<string> MelonLoaderVersions { get; } = new();
+
+    private string? _selectedMelonLoaderVersion;
     public string? SelectedMelonLoaderVersion
     {
         get => _selectedMelonLoaderVersion;
         set => this.RaiseAndSetIfChanged(ref _selectedMelonLoaderVersion, value);
     }
 
-    /// <summary>Jiangyu loader versions offered in the picker ("latest" first, then release tags).</summary>
-    public ObservableCollection<string> JiangyuVersions { get; } = new() { "latest" };
+    /// <summary>Jiangyu loader versions offered in the picker (newest first, tagged "(latest)").</summary>
+    public ObservableCollection<string> JiangyuVersions { get; } = new();
 
-    private string? _selectedJiangyuVersion = "latest";
+    private string? _selectedJiangyuVersion;
     public string? SelectedJiangyuVersion
     {
         get => _selectedJiangyuVersion;
@@ -81,32 +83,46 @@ public sealed class MainViewModel : ReactiveObject
     public MainViewModel()
     {
         Refresh();
-        // Populate the version lists in the background; "latest" works regardless.
-        _ = LoadVersionListAsync(_melonLoader.ListVersionsAsync, MelonLoaderVersions);
-        _ = LoadVersionListAsync(_jiangyu.ListVersionsAsync, JiangyuVersions);
+        // Populate the version lists in the background (network); newest tagged "(latest)".
+        _ = LoadVersionListAsync(_melonLoader.ListVersionsAsync, MelonLoaderVersions, v => SelectedMelonLoaderVersion = v);
+        _ = LoadVersionListAsync(_jiangyu.ListVersionsAsync, JiangyuVersions, v => SelectedJiangyuVersion = v);
     }
 
     private static async Task LoadVersionListAsync(
-        Func<CancellationToken, Task<IReadOnlyList<string>>> list, ObservableCollection<string> into)
+        Func<CancellationToken, Task<IReadOnlyList<string>>> list,
+        ObservableCollection<string> into,
+        Action<string> selectDefault)
     {
         try
         {
-            foreach (var v in await list(CancellationToken.None))
-                if (!into.Contains(v))
-                    into.Add(v);
+            var versions = await list(CancellationToken.None);
+            for (var i = 0; i < versions.Count; i++)
+                into.Add(i == 0 ? versions[i] + LatestSuffix : versions[i]);
+
+            if (into.Count > 0)
+                selectDefault(into[0]);
         }
         catch
         {
-            // Offline or rate-limited — the "latest" option still installs on demand.
+            // Offline or rate-limited — leave empty; install-latest still works via the API.
         }
+    }
+
+    // Strip the "(latest)" label to recover the real tag; null → install latest.
+    private static string? NormalizeVersion(string? selected)
+    {
+        if (string.IsNullOrEmpty(selected))
+            return null;
+        var tag = selected.EndsWith(LatestSuffix, StringComparison.Ordinal)
+            ? selected[..^LatestSuffix.Length]
+            : selected;
+        return string.IsNullOrEmpty(tag) ? null : tag;
     }
 
     /// <summary>Download + install the selected Jiangyu loader version into Mods/, then rescan.</summary>
     public async System.Threading.Tasks.Task InstallJiangyuLoaderAsync()
     {
-        var version = string.IsNullOrEmpty(SelectedJiangyuVersion) || SelectedJiangyuVersion == "latest"
-            ? null
-            : SelectedJiangyuVersion;
+        var version = NormalizeVersion(SelectedJiangyuVersion);
 
         Status = version is null ? "Downloading latest Jiangyu loader…" : $"Downloading Jiangyu loader {version}…";
         try
@@ -126,9 +142,7 @@ public sealed class MainViewModel : ReactiveObject
     /// <summary>Download + install the selected MelonLoader version into the game.</summary>
     public async Task InstallMelonLoaderAsync()
     {
-        var version = string.IsNullOrEmpty(SelectedMelonLoaderVersion) || SelectedMelonLoaderVersion == "latest"
-            ? null
-            : SelectedMelonLoaderVersion;
+        var version = NormalizeVersion(SelectedMelonLoaderVersion);
 
         Status = version is null ? "Downloading latest MelonLoader…" : $"Downloading MelonLoader {version}…";
         try
