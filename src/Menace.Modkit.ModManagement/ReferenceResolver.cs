@@ -9,6 +9,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.CodeAnalysis;
 
+using Menace.Modkit.ModManagement;
+
 namespace Menace.Modkit.App.Services;
 
 /// <summary>
@@ -602,7 +604,7 @@ public class ReferenceResolver
     private static string? FindVersionsJsonPath()
     {
         // Use channel-specific manifest
-        var filename = AppSettings.Instance.IsBetaChannel ? "versions-beta.json" : "versions.json";
+        var filename = ModkitConfig.Current.IsBetaChannel ? "versions-beta.json" : "versions.json";
         var candidates = new[]
         {
             Path.Combine(AppContext.BaseDirectory, "third_party", filename),

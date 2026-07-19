@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Lean standalone MENACE mod manager. Deliberately references ONLY the
+    mod-management library, never Menace.Modkit.App (no stats/asset/code editors,
+    no AssetRipper, no DataExtractor). Everything it acts on is a built mod.
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Menace.ModManager</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Menace.Modkit.ModManagement\Menace.Modkit.ModManagement.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.3.7" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.7" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.7" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.7" />
+    <PackageReference Include="Avalonia.ReactiveUI" Version="11.3.7" />
+  </ItemGroup>
+
+</Project>

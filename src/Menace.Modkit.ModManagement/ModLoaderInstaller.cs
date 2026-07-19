@@ -9,6 +9,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 
+using Menace.Modkit.ModManagement;
+
 namespace Menace.Modkit.App.Services;
 
 /// <summary>
@@ -274,7 +276,7 @@ public class ModLoaderInstaller
             // Only trigger extraction for users who have used Modding Tools features,
             // or if explicitly requested (e.g., Force Extract button).
             // This prevents freeze for users who just want to play mods via Mod Loader.
-            bool shouldExtract = forceExtraction || AppSettings.Instance.HasUsedModdingTools;
+            bool shouldExtract = forceExtraction || ModkitConfig.Current.HasUsedModdingTools;
 
             if (shouldExtract)
             {
@@ -626,7 +628,7 @@ public class ModLoaderInstaller
     private static string? GetConfiguredMelonLoaderVersion()
     {
         // Use channel-specific manifest
-        var filename = AppSettings.Instance.IsBetaChannel ? "versions-beta.json" : "versions.json";
+        var filename = ModkitConfig.Current.IsBetaChannel ? "versions-beta.json" : "versions.json";
         var candidatePaths = new[]
         {
             Path.Combine(AppContext.BaseDirectory, "third_party", filename),

@@ -8,6 +8,8 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Menace.Modkit.App.Models;
 
+using Menace.Modkit.ModManagement;
+
 namespace Menace.Modkit.App.Services;
 
 /// <summary>
@@ -109,7 +111,7 @@ public class CompilationService
             path: "<NullablePolyfill>"));
 
         // Resolve references
-        var gameInstallPath = AppSettings.Instance.GameInstallPath;
+        var gameInstallPath = ModkitConfig.Current.GameInstallPath ?? string.Empty;
         var resolver = new ReferenceResolver(gameInstallPath);
         var references = await resolver.ResolveReferencesAsync(manifest.Code.References, ct).ConfigureAwait(false);
 

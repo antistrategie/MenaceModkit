@@ -40,11 +40,16 @@ public class ModUpdateChecker : IDisposable
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "MenaceModkit", "update_cache.json");
 
-    public ModUpdateChecker()
+    /// <param name="productVersion">
+    /// Version string for the outgoing User-Agent header (cosmetic; GitHub only
+    /// requires a non-empty UA). Hosts may pass their real version; defaults to a
+    /// placeholder so the library stays independent of the app's version system.
+    /// </param>
+    public ModUpdateChecker(string productVersion = "1.0")
     {
         _httpClient = new HttpClient();
         _httpClient.DefaultRequestHeaders.UserAgent.Add(
-            new ProductInfoHeaderValue("MenaceModkit", ModkitVersion.Short));
+            new ProductInfoHeaderValue("MenaceModkit", productVersion));
         _httpClient.Timeout = TimeSpan.FromSeconds(10);
     }
 

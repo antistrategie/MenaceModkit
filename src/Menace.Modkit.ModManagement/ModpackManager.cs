@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using Menace.Modkit.App.Models;
+using Menace.Modkit.ModManagement;
 using SharpCompress.Archives;
 using SharpCompress.Common;
 
@@ -56,7 +57,7 @@ public class ModpackManager
     {
         get
         {
-            var gameInstallPath = AppSettings.Instance.GameInstallPath;
+            var gameInstallPath = ModkitConfig.Current.GameInstallPath;
             if (string.IsNullOrEmpty(gameInstallPath))
                 return string.Empty;
             return Path.Combine(gameInstallPath, "UserData", "ExtractedData");
@@ -67,14 +68,14 @@ public class ModpackManager
     {
         get
         {
-            var gameInstallPath = AppSettings.Instance.GameInstallPath;
+            var gameInstallPath = ModkitConfig.Current.GameInstallPath;
             if (string.IsNullOrEmpty(gameInstallPath))
                 return string.Empty;
             return Path.Combine(gameInstallPath, "Mods");
         }
     }
 
-    public string GetGameInstallPath() => AppSettings.Instance.GameInstallPath;
+    public string GetGameInstallPath() => ModkitConfig.Current.GameInstallPath ?? string.Empty;
 
     public bool HasVanillaData()
     {
@@ -1229,8 +1230,12 @@ public class ModpackManager
     /// </summary>
     public void SeedDownloadedAddons()
     {
-        var addonsDir = Path.Combine(
-            ComponentManager.Instance.ComponentsCachePath, "addons");
+        // No component cache (e.g. standalone host) → nothing to seed.
+        var cachePath = ModkitConfig.Current.ComponentsCachePath;
+        if (string.IsNullOrEmpty(cachePath))
+            return;
+
+        var addonsDir = Path.Combine(cachePath, "addons");
 
         if (!Directory.Exists(addonsDir))
             return;

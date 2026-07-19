@@ -1,0 +1,36 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        x:Class="Menace.ModManager.Views.MainWindow"
+        Width="960" Height="640"
+        Title="Menace Mod Manager">
+  <DockPanel Margin="12">
+
+    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
+      <Button DockPanel.Dock="Right" Content="Refresh" Click="OnRefreshClick" />
+      <TextBlock Text="{Binding Status}" VerticalAlignment="Center" FontWeight="SemiBold" />
+    </DockPanel>
+
+    <Grid DockPanel.Dock="Top" ColumnDefinitions="60,120,*,110,160" Margin="4,0,4,4">
+      <TextBlock Grid.Column="0" Text="On" Opacity="0.6" />
+      <TextBlock Grid.Column="1" Text="Kind" Opacity="0.6" />
+      <TextBlock Grid.Column="2" Text="Name" Opacity="0.6" />
+      <TextBlock Grid.Column="3" Text="Version" Opacity="0.6" />
+      <TextBlock Grid.Column="4" Text="Author" Opacity="0.6" />
+    </Grid>
+
+    <ListBox ItemsSource="{Binding Mods}">
+      <ListBox.ItemTemplate>
+        <DataTemplate>
+          <Grid ColumnDefinitions="60,120,*,110,160">
+            <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled, Mode=OneWay}" IsHitTestVisible="False" />
+            <TextBlock Grid.Column="1" Text="{Binding Kind}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="2" Text="{Binding DisplayName}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="3" Text="{Binding Version}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="4" Text="{Binding Author}" VerticalAlignment="Center" />
+          </Grid>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+
+  </DockPanel>
+</Window>

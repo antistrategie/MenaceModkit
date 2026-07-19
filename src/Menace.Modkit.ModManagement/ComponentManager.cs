@@ -12,6 +12,8 @@ using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
+using Menace.Modkit.ModManagement;
+
 namespace Menace.Modkit.App.Services;
 
 /// <summary>
@@ -98,8 +100,8 @@ public sealed class ComponentManager : IDisposable
             // Use UpdateAvailable (not Outdated) since user already has a working Modkit - self-update shouldn't block
             if (name == "Modkit")
             {
-                status.InstalledVersion = ModkitVersion.MelonVersion;
-                status.State = CompareVersions(ModkitVersion.MelonVersion, component.Version) >= 0
+                status.InstalledVersion = ModkitConfig.Current.LoaderVersion;
+                status.State = CompareVersions(ModkitConfig.Current.LoaderVersion, component.Version) >= 0
                     ? ComponentState.UpToDate
                     : ComponentState.UpdateAvailable;
             }
@@ -136,7 +138,7 @@ public sealed class ComponentManager : IDisposable
             {
                 // User already has MelonLoader in their game.
                 // Check version compatibility and whether update is available.
-                var gamePath = AppSettings.Instance.GameInstallPath;
+                var gamePath = ModkitConfig.Current.GameInstallPath;
                 if (!string.IsNullOrWhiteSpace(gamePath))
                 {
                     var installer = new ModLoaderInstaller(gamePath);
@@ -215,7 +217,7 @@ public sealed class ComponentManager : IDisposable
     {
         try
         {
-            var gamePath = AppSettings.Instance.GameInstallPath;
+            var gamePath = ModkitConfig.Current.GameInstallPath;
             if (string.IsNullOrEmpty(gamePath))
                 return false;
 
@@ -401,7 +403,7 @@ public sealed class ComponentManager : IDisposable
                     component.InstallPath,
                     sourceUrl: downloadInfo.Url,
                     fileHash: actualHash,
-                    downloadedBy: ModkitVersion.AppFull);
+                    downloadedBy: ModkitConfig.Current.AppVersionFull);
 
                 progress?.Report(new DownloadProgress("Complete!", 100, 0));
                 return true;
@@ -815,7 +817,7 @@ public sealed class ComponentManager : IDisposable
     /// </summary>
     private string GetManifestUrlForChannel()
     {
-        var channel = AppSettings.Instance.UpdateChannel;
+        var channel = ModkitConfig.Current.UpdateChannel;
         const string baseUrl = "https://raw.githubusercontent.com/p0ss/MenaceAssetPacker/main/third_party";
 
         return channel == "beta"
@@ -826,12 +828,12 @@ public sealed class ComponentManager : IDisposable
     /// <summary>
     /// Returns the current update channel ("stable" or "beta").
     /// </summary>
-    public string CurrentChannel => AppSettings.Instance.UpdateChannel;
+    public string CurrentChannel => ModkitConfig.Current.UpdateChannel;
 
     /// <summary>
     /// Returns true if the user is on the beta channel.
     /// </summary>
-    public bool IsBetaChannel => AppSettings.Instance.IsBetaChannel;
+    public bool IsBetaChannel => ModkitConfig.Current.IsBetaChannel;
 
     /// <summary>
     /// Invalidate the cached remote manifest.
@@ -910,7 +912,7 @@ public sealed class ComponentManager : IDisposable
             SourceUrl = sourceUrl ?? "",
             DownloadedAt = DateTime.UtcNow,
             FileHash = fileHash ?? "",
-            DownloadedBy = downloadedBy ?? ModkitVersion.AppFull
+            DownloadedBy = downloadedBy ?? ModkitConfig.Current.AppVersionFull
         };
 
         var path = Path.Combine(_componentsCachePath, "manifest.json");

@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    UI-agnostic mod-management library: mod discovery, deploy, compile, conflict
+    detection and MelonLoader install. Shared by the full Modkit app and the lean
+    standalone Mod Manager. Must never reference Avalonia or any app project.
+  -->
+
+  <ItemGroup>
+    <ProjectReference Include="..\Menace.Modkit.Core\Menace.Modkit.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Archive import for modpacks (.zip/.7z/.rar/.tar...) -->
+    <PackageReference Include="SharpCompress" Version="0.40.0" />
+    <!-- Roslyn: compile mod source (CompilationService / ReferenceResolver) -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.14.0" />
+  </ItemGroup>
+
+</Project>
