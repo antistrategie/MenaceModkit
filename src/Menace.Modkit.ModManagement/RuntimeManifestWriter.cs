@@ -76,9 +76,10 @@ internal static class RuntimeManifestWriter
         {
             foreach (var file in Directory.GetFiles(assetsDir, "*", SearchOption.AllDirectories))
             {
-                var relPath = Path.GetRelativePath(assetsDir, file);
+                // Use forward slashes so keys match the manifest/loader convention on every OS.
+                var relPath = Path.GetRelativePath(assetsDir, file).Replace('\\', '/');
                 if (!assetsObj.ContainsKey(relPath))
-                    assetsObj[relPath] = Path.Combine("assets", relPath);
+                    assetsObj[relPath] = "assets/" + relPath;
             }
         }
 

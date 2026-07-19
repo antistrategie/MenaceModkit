@@ -125,7 +125,7 @@ public sealed class JiangyuLoaderInstaller
 
     private async Task<JsonDocument> GetJsonAsync(string url, CancellationToken ct)
     {
-        var stream = await _http.GetStreamAsync(url, ct).ConfigureAwait(false);
+        using var stream = await _http.GetStreamAsync(url, ct).ConfigureAwait(false);
         return await JsonDocument.ParseAsync(stream, cancellationToken: ct).ConfigureAwait(false);
     }
 

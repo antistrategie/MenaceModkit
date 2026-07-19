@@ -45,9 +45,9 @@ public sealed class ModDeployService
             throw new InvalidOperationException("No modpack.json found in the source folder.");
         manifest.Path = sourceDir;
 
-        var name = string.IsNullOrWhiteSpace(manifest.Name)
-            ? Path.GetFileName(sourceDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
-            : manifest.Name;
+        var folderName = Path.GetFileName(sourceDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        // Never let a manifest-supplied name escape Mods/ (it gets Directory.Delete'd below).
+        var name = SanitiseModName(manifest.Name) ?? folderName;
 
         // 1. Compile the mod's C# source, if it has any.
         if (manifest.Code.HasAnySources)
@@ -65,13 +65,20 @@ public sealed class ModDeployService
 
         // 2. Fresh target — deploy replaces any existing install.
         var target = Path.Combine(modsPath, name);
+
+        // Guard against deploying a folder that IS (or contains/is contained by) the target,
+        // which would Directory.Delete the source and lose it.
+        if (PathsOverlap(sourceDir, target))
+            throw new InvalidOperationException(
+                "Deploy the source modpack from a folder outside the game's Mods/ directory.");
+
         if (Directory.Exists(target))
             Directory.Delete(target, recursive: true);
         Directory.CreateDirectory(target);
 
         // 3. Copy the mod tree, minus source/build artefacts.
         progress?.Report($"Deploying {name}…");
-        CopyTree(sourceDir, target);
+        CopyTree(sourceDir, target, isRoot: true);
 
         // 4. Assemble dlls/ from the compiled build output + any prebuilt DLLs.
         AssembleDlls(sourceDir, manifest, target);
@@ -83,7 +90,7 @@ public sealed class ModDeployService
         return target;
     }
 
-    private static void CopyTree(string source, string dest)
+    private static void CopyTree(string source, string dest, bool isRoot)
     {
         Directory.CreateDirectory(dest);
 
@@ -93,9 +100,11 @@ public sealed class ModDeployService
         foreach (var dir in Directory.GetDirectories(source))
         {
             var dirName = Path.GetFileName(dir);
-            if (ExcludedDirs.Contains(dirName, StringComparer.OrdinalIgnoreCase))
+            // Only strip src/build/obj/bin/… at the modpack root — a mod may legitimately
+            // have e.g. an assets/obj/ folder deeper in the tree.
+            if (isRoot && ExcludedDirs.Contains(dirName, StringComparer.OrdinalIgnoreCase))
                 continue;
-            CopyTree(dir, Path.Combine(dest, dirName));
+            CopyTree(dir, Path.Combine(dest, dirName), isRoot: false);
         }
     }
 
@@ -124,5 +133,33 @@ public sealed class ModDeployService
                 File.Copy(full, Path.Combine(dllDir, Path.GetFileName(full)), overwrite: true);
             }
         }
+    }
+
+    /// <summary>
+    /// Reduce a manifest-supplied name to a safe single folder name (no path components,
+    /// no invalid chars). Returns null if nothing usable remains, so the caller falls back
+    /// to the source folder name.
+    /// </summary>
+    private static string? SanitiseModName(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        var name = Path.GetFileName(raw.Trim()); // drops any directory / traversal components
+        if (string.IsNullOrEmpty(name) || name == "." || name == "..")
+            return null;
+
+        foreach (var c in Path.GetInvalidFileNameChars())
+            name = name.Replace(c, '_');
+
+        return string.IsNullOrWhiteSpace(name) ? null : name;
+    }
+
+    /// <summary>True if the two paths are the same, or one contains the other.</summary>
+    private static bool PathsOverlap(string a, string b)
+    {
+        var fa = Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var fb = Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return fa.StartsWith(fb, StringComparison.Ordinal) || fb.StartsWith(fa, StringComparison.Ordinal);
     }
 }

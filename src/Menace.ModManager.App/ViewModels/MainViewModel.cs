@@ -226,16 +226,26 @@ public sealed class MainViewModel : ReactiveObject
 
     public void Refresh()
     {
-        Mods.Clear();
-        foreach (var mod in _catalog.Scan().OrderBy(m => KindRank(m.Kind)).ThenBy(m => m.DisplayName))
-            Mods.Add(mod);
+        // Refresh runs from the constructor and after every operation, so it must never throw
+        // (an unhandled throw here would fail app startup or fault an async handler).
+        try
+        {
+            Mods.Clear();
+            foreach (var mod in _catalog.Scan().OrderBy(m => KindRank(m.Kind)).ThenBy(m => m.DisplayName))
+                Mods.Add(mod);
 
-        var path = _catalog.ModsPath;
-        Status = path == null
-            ? "Game not located — set MENACE_GAME_PATH."
-            : $"{Mods.Count} mod(s) — {path}";
+            var path = _catalog.ModsPath;
+            Status = path == null
+                ? "Game not located — set MENACE_GAME_PATH."
+                : $"{Mods.Count} mod(s) — {path}";
 
-        RefreshLoaderStatuses();
+            RefreshLoaderStatuses();
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Couldn't read the Mods folder: {ex.Message}";
+            Status = "Scan failed.";
+        }
     }
 
     // Infrastructure (loaders) first, then modpacks, Jiangyu mods, raw MelonMods.

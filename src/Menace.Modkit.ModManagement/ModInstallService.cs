@@ -67,7 +67,15 @@ public sealed class ModInstallService
     private static string InstallFolder(string sourceDir, string modsPath)
     {
         var name = Path.GetFileName(sourceDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var target = PrepareTarget(modsPath, name);
+        var target = Path.Combine(modsPath, name);
+
+        // Installing a folder that IS (or contains) the target would delete the source.
+        var src = Path.GetFullPath(sourceDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        var tgt = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (src.StartsWith(tgt, StringComparison.Ordinal) || tgt.StartsWith(src, StringComparison.Ordinal))
+            throw new InvalidOperationException("Install the mod from a folder outside the game's Mods/ directory.");
+
+        ClearTarget(target);
         CopyDirectory(sourceDir, target);
         return target;
     }
@@ -144,19 +152,21 @@ public sealed class ModInstallService
     private static string PrepareTarget(string modsPath, string name)
     {
         var target = Path.Combine(modsPath, name);
-        if (Directory.Exists(target))
-            Directory.Delete(target, recursive: true);
-        else if (File.Exists(target))
-            File.Delete(target);
+        ClearTarget(target);
         return target;
     }
 
-    private static string PlaceDirectory(string sourceDir, string target)
+    private static void ClearTarget(string target)
     {
         if (Directory.Exists(target))
             Directory.Delete(target, recursive: true);
         else if (File.Exists(target))
             File.Delete(target);
+    }
+
+    private static string PlaceDirectory(string sourceDir, string target)
+    {
+        ClearTarget(target);
         // Copy (not move) so it works across volumes and leaves the temp dir for cleanup.
         CopyDirectory(sourceDir, target);
         return target;

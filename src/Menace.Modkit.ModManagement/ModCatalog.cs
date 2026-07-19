@@ -80,16 +80,28 @@ public sealed class ModCatalog
     {
         foreach (var dir in Directory.GetDirectories(root))
         {
-            ManagedMod? mod =
-                File.Exists(Path.Combine(dir, "modpack.json")) ? FromModpack(dir, enabled)
-                : File.Exists(Path.Combine(dir, "jiangyu.json")) ? FromJiangyu(dir, enabled)
-                // A folder with a DLL but no manifest is a raw MelonMod shipped with assets.
-                : FromDllFolder(dir, enabled);
+            ManagedMod? mod;
+            try
+            {
+                mod = ClassifyFolder(dir, enabled);
+            }
+            catch
+            {
+                // A single broken mod folder must never fail the whole scan (which would
+                // crash the app at launch). Skip it.
+                mod = null;
+            }
 
             if (mod != null)
                 yield return mod;
         }
     }
+
+    private static ManagedMod? ClassifyFolder(string dir, bool enabled) =>
+        File.Exists(Path.Combine(dir, "modpack.json")) ? FromModpack(dir, enabled)
+        : File.Exists(Path.Combine(dir, "jiangyu.json")) ? FromJiangyu(dir, enabled)
+        // A folder with a DLL but no manifest is a raw MelonMod shipped with assets.
+        : FromDllFolder(dir, enabled);
 
     /// <summary>
     /// A raw MelonMod distributed as a folder (a top-level <c>.dll</c> plus asset/config
@@ -99,7 +111,16 @@ public sealed class ModCatalog
     {
         var dlls = Directory.GetFiles(dir, "*.dll");
         if (dlls.Length == 0)
-            return null;
+        {
+            // Some mods ship the DLL in a subfolder (e.g. MyMod/bin/mod.dll). Look deeper,
+            // but only accept it as a mod if a nested DLL is actually a MelonMod — otherwise
+            // an asset-only folder that happens to contain a stray DLL would be misclassified.
+            dlls = Directory.GetFiles(dir, "*.dll", SearchOption.AllDirectories)
+                .Where(d => MelonModInspector.Inspect(d)?.IsMelonMod == true)
+                .ToArray();
+            if (dlls.Length == 0)
+                return null;
+        }
 
         // Prefer the DLL carrying [MelonInfo] (the mod itself, not a bundled dependency),
         // then one named like the folder, else the first.
@@ -133,7 +154,15 @@ public sealed class ModCatalog
 
     private static ManagedMod FromModpack(string dir, bool enabled)
     {
-        var manifest = ModpackManifest.LoadFromFile(Path.Combine(dir, "modpack.json"));
+        ModpackManifest? manifest = null;
+        try
+        {
+            manifest = ModpackManifest.LoadFromFile(Path.Combine(dir, "modpack.json"));
+        }
+        catch
+        {
+            // Malformed/locked modpack.json — still surface the mod using the folder name.
+        }
         var name = string.IsNullOrEmpty(manifest?.Name) ? Path.GetFileName(dir) : manifest!.Name;
 
         return new ManagedMod

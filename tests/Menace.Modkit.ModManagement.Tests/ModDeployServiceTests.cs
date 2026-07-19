@@ -78,6 +78,43 @@ public sealed class ModDeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Deploy_SanitisesTraversalName()
+    {
+        WriteManifest(@"{""manifestVersion"":2,""name"":""../../evil""}");
+
+        var target = await new ModDeployService(_config).DeployAsync(_sourceDir);
+
+        // Name reduced to a plain folder under Mods/ — never escapes it.
+        Assert.Equal(_modsDir, Path.GetDirectoryName(target));
+        Assert.False(Directory.Exists(Path.Combine(_gameDir, "evil")));
+    }
+
+    [Fact]
+    public async Task Deploy_SourceInsideMods_ThrowsAndPreservesSource()
+    {
+        var src = Path.Combine(_modsDir, "InPlace");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "modpack.json"), @"{""manifestVersion"":2,""name"":""InPlace""}");
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new ModDeployService(_config).DeployAsync(src));
+
+        Assert.True(File.Exists(Path.Combine(src, "modpack.json"))); // not deleted
+    }
+
+    [Fact]
+    public async Task Deploy_KeepsNestedFolderNamedLikeAnArtefact()
+    {
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Nested""}");
+        Directory.CreateDirectory(Path.Combine(_sourceDir, "assets", "obj")); // 'obj' only excluded at root
+        File.WriteAllText(Path.Combine(_sourceDir, "assets", "obj", "model.obj"), "v");
+
+        var target = await new ModDeployService(_config).DeployAsync(_sourceDir);
+
+        Assert.True(File.Exists(Path.Combine(target, "assets", "obj", "model.obj")));
+    }
+
+    [Fact]
     public async Task Deploy_ReplacesExistingInstall()
     {
         WriteManifest(@"{""manifestVersion"":2,""name"":""Dup"",""version"":""1.0.0""}");

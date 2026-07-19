@@ -144,6 +144,34 @@ namespace M { public class E { } }";
     }
 
     [Fact]
+    public void Scan_MalformedModpackJson_DoesNotThrowAndStillLists()
+    {
+        // A bad modpack.json must not crash the scan (which would fail app launch).
+        var packDir = Path.Combine(_modsDir, "BadPack");
+        Directory.CreateDirectory(packDir);
+        File.WriteAllText(Path.Combine(packDir, "modpack.json"), "{ this is not valid json ");
+
+        var mods = NewCatalog().Scan(); // must not throw
+
+        Assert.Contains(mods, m => m.Kind == ModKind.Modpack && m.Id == "BadPack");
+    }
+
+    [Fact]
+    public void Scan_MelonModDllInSubfolder_IsDetected()
+    {
+        // Raw MelonMod shipped as MyMod/bin/mod.dll (no manifest, DLL not at the folder root).
+        var modDir = Path.Combine(_modsDir, "SubMod");
+        Directory.CreateDirectory(Path.Combine(modDir, "bin"));
+        EmitMelonMod("SubMod", "Sub Mod", "1.0.0", "dev"); // lands at Mods/SubMod.dll…
+        File.Move(Path.Combine(_modsDir, "SubMod.dll"), Path.Combine(modDir, "bin", "SubMod.dll"));
+
+        var mod = NewCatalog().Scan().Single(m => m.Id == "SubMod");
+
+        Assert.Equal(ModKind.MelonMod, mod.Kind);
+        Assert.Equal("Sub Mod", mod.DisplayName);
+    }
+
+    [Fact]
     public void Scan_NoGameLocated_ReturnsEmpty()
     {
         var catalog = new ModCatalog(new TestModkitConfig { GameInstallPath = null });
