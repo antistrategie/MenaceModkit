@@ -13,14 +13,23 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         AvaloniaXamlLoader.Load(this);
+        DragDrop.SetAllowDrop(this, true);
+        AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
     }
 
     private MainViewModel? Vm => DataContext as MainViewModel;
 
-    private static void OnDragOver(object? sender, DragEventArgs e)
-        => e.DragEffects = e.Data.Contains(DataFormats.Files) ? DragDropEffects.Copy : DragDropEffects.None;
+    private void OnDragEnter(object? sender, DragEventArgs e) => SetEffect(e);
+    private void OnDragOver(object? sender, DragEventArgs e) => SetEffect(e);
+
+    // Accept the drag if it carries files. Gated on the format (known during the drag),
+    // not on GetFiles() (whose data may not be materialised until the actual drop).
+    private static void SetEffect(DragEventArgs e)
+        => e.DragEffects = e.DataTransfer?.Formats.Contains(DataFormat.File) == true
+            ? DragDropEffects.Copy
+            : DragDropEffects.None;
 
     private async void OnDrop(object? sender, DragEventArgs e)
     {
@@ -28,7 +37,7 @@ public partial class MainWindow : Window
         if (Vm is not { IsBusy: false } vm)
             return;
 
-        var files = e.Data.GetFiles();
+        var files = e.DataTransfer?.TryGetFiles();
         if (files is null)
             return;
 
