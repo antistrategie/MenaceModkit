@@ -46,6 +46,27 @@ public sealed class MainViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _selected, value);
     }
 
+    private string _melonLoaderStatus = string.Empty;
+    public string MelonLoaderStatus
+    {
+        get => _melonLoaderStatus;
+        private set => this.RaiseAndSetIfChanged(ref _melonLoaderStatus, value);
+    }
+
+    private string _modpackLoaderStatus = string.Empty;
+    public string ModpackLoaderStatus
+    {
+        get => _modpackLoaderStatus;
+        private set => this.RaiseAndSetIfChanged(ref _modpackLoaderStatus, value);
+    }
+
+    private string _jiangyuLoaderStatus = string.Empty;
+    public string JiangyuLoaderStatus
+    {
+        get => _jiangyuLoaderStatus;
+        private set => this.RaiseAndSetIfChanged(ref _jiangyuLoaderStatus, value);
+    }
+
     public MainViewModel()
     {
         Refresh();
@@ -129,13 +150,55 @@ public sealed class MainViewModel : ReactiveObject
     public void Refresh()
     {
         Mods.Clear();
-        foreach (var mod in _catalog.Scan().OrderBy(m => m.Kind).ThenBy(m => m.DisplayName))
+        foreach (var mod in _catalog.Scan().OrderBy(m => KindRank(m.Kind)).ThenBy(m => m.DisplayName))
             Mods.Add(mod);
 
         var path = _catalog.ModsPath;
         Status = path == null
             ? "Game not located — set MENACE_GAME_PATH."
             : $"{Mods.Count} mod(s) — {path}";
+
+        RefreshLoaderStatuses();
+    }
+
+    // Infrastructure (loaders) first, then modpacks, Jiangyu mods, raw MelonMods.
+    private static int KindRank(ModKind kind) => kind switch
+    {
+        ModKind.Infrastructure => 0,
+        ModKind.Modpack => 1,
+        ModKind.Jiangyu => 2,
+        ModKind.MelonMod => 3,
+        _ => 4,
+    };
+
+    private void RefreshLoaderStatuses()
+    {
+        var gamePath = ModkitConfig.Current.GameInstallPath;
+        if (string.IsNullOrEmpty(gamePath))
+        {
+            MelonLoaderStatus = ModpackLoaderStatus = JiangyuLoaderStatus = "game not located";
+            return;
+        }
+
+        // MelonLoader lives at the game root (version.dll + MelonLoader/), not in Mods/,
+        // so query the installer rather than the scanned list.
+        var installer = new ModLoaderInstaller(gamePath);
+        var melonVersion = installer.GetInstalledMelonLoaderVersion();
+        MelonLoaderStatus = installer.IsMelonLoaderInstalled()
+            ? $"installed{(string.IsNullOrEmpty(melonVersion) ? "" : $" {melonVersion}")}"
+            : "not installed";
+
+        // The other two appear in the scan as infrastructure DLLs in Mods/.
+        ModpackLoaderStatus = DescribeInstalled("Menace.ModpackLoader.dll");
+        JiangyuLoaderStatus = DescribeInstalled("Jiangyu.Loader.dll");
+    }
+
+    private string DescribeInstalled(string dllId)
+    {
+        var mod = Mods.FirstOrDefault(m => string.Equals(m.Id, dllId, StringComparison.OrdinalIgnoreCase));
+        if (mod is null)
+            return "not installed";
+        return string.IsNullOrEmpty(mod.Version) ? "installed" : $"installed {mod.Version}";
     }
 
     /// <summary>Flip a mod's enabled state (move between Mods/ and DisabledMods/), then rescan.</summary>

@@ -1,4 +1,5 @@
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using Menace.Modkit.ModManagement.Tests.Helpers;
 using Xunit;
@@ -41,6 +42,27 @@ public sealed class ModInstallServiceTests : IDisposable
 
         var mod = new ModCatalog(_config).Scan().Single(m => m.Kind == ModKind.Modpack);
         Assert.Equal("Cool Pack", mod.DisplayName);
+    }
+
+    [Fact]
+    public void Install_ZipWithWrapperFolder_ExtractsIntoMods()
+    {
+        // Build a zip containing "WOMENACE/jiangyu.json" (the common publish layout).
+        var stage = Path.Combine(_gameDir, "stage", "WOMENACE");
+        Directory.CreateDirectory(stage);
+        File.WriteAllText(Path.Combine(stage, "jiangyu.json"),
+            @"{""name"":""WOMENACE"",""version"":""1.4.0"",""author"":""pi""}");
+
+        var zipPath = Path.Combine(_gameDir, "WOMENACE-1.4.0.zip");
+        ZipFile.CreateFromDirectory(Path.Combine(_gameDir, "stage"), zipPath);
+
+        var installed = new ModInstallService(_config).Install(zipPath);
+
+        Assert.Equal(Path.Combine(_modsDir, "WOMENACE"), installed);
+        Assert.True(File.Exists(Path.Combine(_modsDir, "WOMENACE", "jiangyu.json")));
+
+        var mod = new ModCatalog(_config).Scan().Single(m => m.Kind == ModKind.Jiangyu);
+        Assert.Equal("WOMENACE", mod.DisplayName);
     }
 
     [Fact]

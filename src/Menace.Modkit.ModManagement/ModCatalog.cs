@@ -14,11 +14,12 @@ namespace Menace.Modkit.ModManagement;
 /// </summary>
 public sealed class ModCatalog
 {
-    // Modkit's own infrastructure DLLs — shown but never managed.
+    // Loader/infrastructure DLLs — shown but never toggled or uninstalled by the manager.
     private static readonly HashSet<string> InfrastructureDlls = new(StringComparer.OrdinalIgnoreCase)
     {
         "Menace.ModpackLoader.dll",
         "Menace.DataExtractor.dll",
+        "Jiangyu.Loader.dll",
     };
 
     // Runtime/framework DLLs that are never mods.
@@ -79,12 +80,55 @@ public sealed class ModCatalog
     {
         foreach (var dir in Directory.GetDirectories(root))
         {
-            if (File.Exists(Path.Combine(dir, "modpack.json")))
-                yield return FromModpack(dir, enabled);
-            else if (File.Exists(Path.Combine(dir, "jiangyu.json")))
-                yield return FromJiangyu(dir, enabled);
-            // otherwise: not a recognised mod folder — skip
+            ManagedMod? mod =
+                File.Exists(Path.Combine(dir, "modpack.json")) ? FromModpack(dir, enabled)
+                : File.Exists(Path.Combine(dir, "jiangyu.json")) ? FromJiangyu(dir, enabled)
+                // A folder with a DLL but no manifest is a raw MelonMod shipped with assets.
+                : FromDllFolder(dir, enabled);
+
+            if (mod != null)
+                yield return mod;
         }
+    }
+
+    /// <summary>
+    /// A raw MelonMod distributed as a folder (a top-level <c>.dll</c> plus asset/config
+    /// subfolders, no manifest). Returns null if the folder holds no DLL.
+    /// </summary>
+    private static ManagedMod? FromDllFolder(string dir, bool enabled)
+    {
+        var dlls = Directory.GetFiles(dir, "*.dll");
+        if (dlls.Length == 0)
+            return null;
+
+        // Prefer the DLL carrying [MelonInfo] (the mod itself, not a bundled dependency),
+        // then one named like the folder, else the first.
+        MelonModInfo? info = null;
+        var isJiangyu = false;
+        foreach (var dll in dlls)
+        {
+            var inspected = MelonModInspector.Inspect(dll);
+            if (inspected?.IsJiangyu == true)
+                isJiangyu = true;
+            if (info == null && inspected?.HasMelonInfo == true)
+                info = inspected;
+        }
+        info ??= MelonModInspector.Inspect(
+            dlls.FirstOrDefault(d => string.Equals(
+                Path.GetFileNameWithoutExtension(d), Path.GetFileName(dir), StringComparison.OrdinalIgnoreCase))
+            ?? dlls[0]);
+
+        var folderName = Path.GetFileName(dir);
+        return new ManagedMod
+        {
+            Kind = isJiangyu || info?.IsJiangyu == true ? ModKind.Jiangyu : ModKind.MelonMod,
+            Id = folderName,
+            DisplayName = !string.IsNullOrEmpty(info?.Name) ? info!.Name! : folderName,
+            Version = info?.Version ?? string.Empty,
+            Author = info?.Author ?? string.Empty,
+            IsEnabled = enabled,
+            Location = dir,
+        };
     }
 
     private static ManagedMod FromModpack(string dir, bool enabled)
@@ -109,6 +153,7 @@ public sealed class ModCatalog
         var name = Path.GetFileName(dir);
         var version = string.Empty;
         var author = string.Empty;
+        string? compiledForJiangyu = null;
 
         try
         {
@@ -117,6 +162,7 @@ public sealed class ModCatalog
             name = JsonString(root, "name") ?? name;
             version = JsonString(root, "version") ?? string.Empty;
             author = JsonString(root, "author") ?? string.Empty;
+            compiledForJiangyu = JsonString(root, "compiledForJiangyu");
         }
         catch
         {
@@ -130,6 +176,7 @@ public sealed class ModCatalog
             DisplayName = name,
             Version = version,
             Author = author,
+            CompiledForJiangyu = compiledForJiangyu,
             IsEnabled = enabled,
             Location = dir,
         };

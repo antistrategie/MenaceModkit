@@ -101,14 +101,46 @@ namespace M { public class E { } }";
         var modDir = Path.Combine(_modsDir, "WOMENACE");
         Directory.CreateDirectory(modDir);
         File.WriteAllText(Path.Combine(modDir, "jiangyu.json"),
-            @"{""name"":""WOMENACE"",""version"":""1.4.0"",""author"":""pi""}");
+            @"{""name"":""WOMENACE"",""version"":""1.4.0"",""author"":""pi"",""compiledForJiangyu"":""1.2.0""}");
 
         var jiangyu = NewCatalog().Scan().Single(m => m.Kind == ModKind.Jiangyu);
 
         Assert.Equal("WOMENACE", jiangyu.DisplayName);
         Assert.Equal("1.4.0", jiangyu.Version);
         Assert.Equal("pi", jiangyu.Author);
+        Assert.Equal("1.2.0", jiangyu.CompiledForJiangyu);
+        Assert.Contains("JY 1.2.0", jiangyu.VersionDisplay);
         Assert.True(jiangyu.IsEnabled);
+    }
+
+    [Fact]
+    public void Scan_RawMelonModFolder_WithAssets_IsDetected()
+    {
+        // A raw MelonMod shipped as a folder: MyMod.dll + an assets/ subfolder, no manifest.
+        var modDir = Path.Combine(_modsDir, "FolderMod");
+        Directory.CreateDirectory(Path.Combine(modDir, "assets"));
+        File.WriteAllText(Path.Combine(modDir, "assets", "data.txt"), "x");
+        EmitMelonMod("FolderMod", "Folder Mod", "2.0.0", "dev"); // lands in Mods/ root...
+        File.Move(Path.Combine(_modsDir, "FolderMod.dll"), Path.Combine(modDir, "FolderMod.dll"));
+
+        var mod = NewCatalog().Scan().Single(m => m.Id == "FolderMod");
+
+        Assert.Equal(ModKind.MelonMod, mod.Kind);
+        Assert.Equal("Folder Mod", mod.DisplayName);
+        Assert.Equal("2.0.0", mod.Version);
+        Assert.Equal(modDir, mod.Location);
+    }
+
+    [Fact]
+    public void Scan_JiangyuLoaderDll_IsInfrastructure()
+    {
+        // The Jiangyu *loader* (a loose Jiangyu.Loader.dll) is infrastructure, not a manageable mod.
+        FixtureAssembly.Emit(_modsDir, "Jiangyu.Loader", "namespace J { public class L { } }");
+
+        var loader = NewCatalog().Scan().Single(m => m.Id == "Jiangyu.Loader.dll");
+
+        Assert.Equal(ModKind.Infrastructure, loader.Kind);
+        Assert.True(loader.IsProtected);
     }
 
     [Fact]

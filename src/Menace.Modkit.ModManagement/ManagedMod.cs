@@ -38,6 +38,18 @@ public sealed class ManagedMod
     public string Author { get; init; } = string.Empty;
 
     /// <summary>
+    /// For Jiangyu mods: the Jiangyu loader version the mod was compiled against
+    /// (the <c>compiledForJiangyu</c> stamp). Null for other kinds.
+    /// </summary>
+    public string? CompiledForJiangyu { get; init; }
+
+    /// <summary>Version shown in the UI — includes the Jiangyu target for Jiangyu mods.</summary>
+    public string VersionDisplay =>
+        string.IsNullOrEmpty(CompiledForJiangyu)
+            ? Version
+            : string.IsNullOrEmpty(Version) ? $"JY {CompiledForJiangyu}" : $"{Version} · JY {CompiledForJiangyu}";
+
+    /// <summary>
     /// Whether the mod is active. For DLLs this reflects the <c>.dll</c> vs
     /// <c>.dll.disabled</c> file name; for modpacks it reflects presence in <c>Mods/</c>.
     /// </summary>

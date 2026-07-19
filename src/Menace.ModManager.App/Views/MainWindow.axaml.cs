@@ -21,26 +21,20 @@ public partial class MainWindow : Window
             Vm?.Toggle(mod);
     }
 
-    private async void OnAddFolderClick(object? sender, RoutedEventArgs e)
-    {
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
-        {
-            Title = "Select a mod folder to install",
-            AllowMultiple = false,
-        });
-
-        var path = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
-        if (!string.IsNullOrEmpty(path))
-            Vm?.Install(path);
-    }
-
-    private async void OnAddDllClick(object? sender, RoutedEventArgs e)
+    private async void OnAddModClick(object? sender, RoutedEventArgs e)
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Select a mod DLL to install",
+            Title = "Select a mod archive or DLL to install",
             AllowMultiple = false,
-            FileTypeFilter = new[] { new FilePickerFileType("MelonLoader mod") { Patterns = new[] { "*.dll" } } },
+            FileTypeFilter = new[]
+            {
+                new FilePickerFileType("Mods (archive or DLL)")
+                {
+                    Patterns = new[] { "*.zip", "*.7z", "*.rar", "*.tar", "*.tar.gz", "*.tgz", "*.dll" },
+                },
+                FilePickerFileTypes.All,
+            },
         });
 
         var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;

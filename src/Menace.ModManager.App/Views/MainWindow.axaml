@@ -20,16 +20,16 @@
         <Grid ColumnDefinitions="150,*,Auto" RowDefinitions="Auto,Auto,Auto">
 
           <TextBlock Grid.Row="0" Grid.Column="0" Text="MelonLoader" VerticalAlignment="Center" />
-          <TextBlock Grid.Row="0" Grid.Column="1" Text="mod framework (required)" Opacity="0.5" VerticalAlignment="Center" />
+          <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding MelonLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" />
           <Button Grid.Row="0" Grid.Column="2" Content="Install / Update" Click="OnInstallMelonLoaderClick" />
 
           <TextBlock Grid.Row="1" Grid.Column="0" Text="Modpack Loader" VerticalAlignment="Center" Margin="0,8,0,0" />
-          <TextBlock Grid.Row="1" Grid.Column="1" Text="Menace Modkit runtime" Opacity="0.5" VerticalAlignment="Center" Margin="0,8,0,0" />
+          <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ModpackLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" Margin="0,8,0,0" />
           <Button Grid.Row="1" Grid.Column="2" Content="Install / Update" Click="OnInstallModpackLoaderClick" Margin="0,8,0,0" />
 
           <TextBlock Grid.Row="2" Grid.Column="0" Text="Jiangyu Loader" VerticalAlignment="Center" Margin="0,8,0,0" />
-          <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center" Margin="0,8,0,0">
-            <TextBlock Text="version" Opacity="0.5" VerticalAlignment="Center" />
+          <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,8,0,0">
+            <TextBlock Text="{Binding JiangyuLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" />
             <ComboBox ItemsSource="{Binding JiangyuVersions}" SelectedItem="{Binding SelectedJiangyuVersion}" MinWidth="130" />
           </StackPanel>
           <Button Grid.Row="2" Grid.Column="2" Content="Get" Click="OnGetJiangyuClick" Margin="0,8,0,0" />
@@ -40,13 +40,12 @@
 
     <!-- Mod actions -->
     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="6" Margin="0,10,0,0">
-      <Button Content="Add folder…" Click="OnAddFolderClick" />
-      <Button Content="Add DLL…" Click="OnAddDllClick" />
+      <Button Content="Add mod…" Click="OnAddModClick" />
       <Button Content="Uninstall selected" Click="OnUninstallClick" />
     </StackPanel>
 
     <!-- Column header -->
-    <Grid DockPanel.Dock="Top" ColumnDefinitions="60,120,*,110,160" Margin="4,0,4,4">
+    <Grid DockPanel.Dock="Top" ColumnDefinitions="60,110,*,150,130" Margin="4,0,4,4">
       <TextBlock Grid.Column="0" Text="On" Opacity="0.6" />
       <TextBlock Grid.Column="1" Text="Kind" Opacity="0.6" />
       <TextBlock Grid.Column="2" Text="Name" Opacity="0.6" />
@@ -58,14 +57,14 @@
     <ListBox ItemsSource="{Binding Mods}" SelectedItem="{Binding Selected}">
       <ListBox.ItemTemplate>
         <DataTemplate>
-          <Grid ColumnDefinitions="60,120,*,110,160">
+          <Grid ColumnDefinitions="60,110,*,150,130">
             <CheckBox Grid.Column="0"
                       IsChecked="{Binding IsEnabled, Mode=OneWay}"
                       IsEnabled="{Binding CanToggle}"
                       Click="OnToggleClick" />
             <TextBlock Grid.Column="1" Text="{Binding Kind}" VerticalAlignment="Center" />
             <TextBlock Grid.Column="2" Text="{Binding DisplayName}" VerticalAlignment="Center" />
-            <TextBlock Grid.Column="3" Text="{Binding Version}" VerticalAlignment="Center" />
+            <TextBlock Grid.Column="3" Text="{Binding VersionDisplay}" VerticalAlignment="Center" />
             <TextBlock Grid.Column="4" Text="{Binding Author}" VerticalAlignment="Center" />
           </Grid>
         </DataTemplate>
