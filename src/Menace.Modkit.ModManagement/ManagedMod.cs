@@ -51,4 +51,7 @@ public sealed class ManagedMod
 
     /// <summary>True for mods the manager must not touch (infrastructure).</summary>
     public bool IsProtected => Kind == ModKind.Infrastructure;
+
+    /// <summary>Whether the user may enable/disable this mod.</summary>
+    public bool CanToggle => !IsProtected;
 }

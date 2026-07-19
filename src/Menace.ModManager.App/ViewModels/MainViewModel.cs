@@ -12,6 +12,7 @@ namespace Menace.ModManager.ViewModels;
 public sealed class MainViewModel : ReactiveObject
 {
     private readonly ModCatalog _catalog = new();
+    private readonly ModEnableService _enableService = new();
 
     public ObservableCollection<ManagedMod> Mods { get; } = new();
 
@@ -34,5 +35,24 @@ public sealed class MainViewModel : ReactiveObject
         Status = path == null
             ? "Game not located — set MENACE_GAME_PATH."
             : $"{Mods.Count} mod(s) — {path}";
+    }
+
+    /// <summary>Flip a mod's enabled state (move between Mods/ and DisabledMods/), then rescan.</summary>
+    public void Toggle(ManagedMod mod)
+    {
+        if (!mod.CanToggle)
+            return;
+
+        try
+        {
+            _enableService.SetEnabled(mod, !mod.IsEnabled);
+        }
+        catch (Exception ex)
+        {
+            Status = $"Failed to toggle {mod.DisplayName}: {ex.Message}";
+            return;
+        }
+
+        Refresh();
     }
 }

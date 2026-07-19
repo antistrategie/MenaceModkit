@@ -22,7 +22,10 @@
       <ListBox.ItemTemplate>
         <DataTemplate>
           <Grid ColumnDefinitions="60,120,*,110,160">
-            <CheckBox Grid.Column="0" IsChecked="{Binding IsEnabled, Mode=OneWay}" IsHitTestVisible="False" />
+            <CheckBox Grid.Column="0"
+                      IsChecked="{Binding IsEnabled, Mode=OneWay}"
+                      IsEnabled="{Binding CanToggle}"
+                      Click="OnToggleClick" />
             <TextBlock Grid.Column="1" Text="{Binding Kind}" VerticalAlignment="Center" />
             <TextBlock Grid.Column="2" Text="{Binding DisplayName}" VerticalAlignment="Center" />
             <TextBlock Grid.Column="3" Text="{Binding Version}" VerticalAlignment="Center" />

@@ -40,39 +40,54 @@ public sealed class ModCatalog
             ? null
             : Path.Combine(_config.GameInstallPath, "Mods");
 
+    /// <summary>Where disabled mods are parked (a sibling of <c>Mods/</c>).</summary>
+    public string? DisabledPath =>
+        string.IsNullOrEmpty(_config.GameInstallPath)
+            ? null
+            : Path.Combine(_config.GameInstallPath, "DisabledMods");
+
     /// <summary>
-    /// Enumerate all mods currently in <c>Mods/</c>. Returns an empty list when the game
-    /// is not located or has no <c>Mods/</c> directory yet.
+    /// Enumerate all mods — enabled ones in <c>Mods/</c> and disabled ones parked in
+    /// <c>DisabledMods/</c>. Returns empty when the game is not located.
     /// </summary>
     public IReadOnlyList<ManagedMod> Scan()
     {
         var result = new List<ManagedMod>();
-        var modsPath = ModsPath;
-        if (modsPath == null || !Directory.Exists(modsPath))
-            return result;
 
-        result.AddRange(ScanModFolders(modsPath));
-        result.AddRange(ScanLooseDlls(modsPath));
+        var modsPath = ModsPath;
+        if (modsPath != null && Directory.Exists(modsPath))
+        {
+            result.AddRange(ScanModFolders(modsPath, enabled: true));
+            result.AddRange(ScanLooseDlls(modsPath, enabled: true));
+        }
+
+        var disabledPath = DisabledPath;
+        if (disabledPath != null && Directory.Exists(disabledPath))
+        {
+            result.AddRange(ScanModFolders(disabledPath, enabled: false));
+            result.AddRange(ScanLooseDlls(disabledPath, enabled: false));
+        }
+
         return result;
     }
 
     /// <summary>
-    /// Classify each top-level folder in <c>Mods/</c>: a <c>modpack.json</c> is a Modkit
+    /// Classify each top-level folder in a scan root: a <c>modpack.json</c> is a Modkit
     /// modpack; a <c>jiangyu.json</c> is a Jiangyu mod (folder with code/bundles/locales).
     /// </summary>
-    private static IEnumerable<ManagedMod> ScanModFolders(string modsPath)
+    private static IEnumerable<ManagedMod> ScanModFolders(string root, bool enabled)
     {
-        foreach (var dir in Directory.GetDirectories(modsPath))
+        foreach (var dir in Directory.GetDirectories(root))
         {
             if (File.Exists(Path.Combine(dir, "modpack.json")))
-                yield return FromModpack(dir);
+                yield return FromModpack(dir, enabled);
             else if (File.Exists(Path.Combine(dir, "jiangyu.json")))
-                yield return FromJiangyu(dir);
+                yield return FromJiangyu(dir, enabled);
             // otherwise: not a recognised mod folder — skip
         }
     }
 
-    private static ManagedMod FromModpack(string dir)
+    private static ManagedMod FromModpack(string dir, bool enabled)
     {
         var manifest = ModpackManifest.LoadFromFile(Path.Combine(dir, "modpack.json"));
         var name = string.IsNullOrEmpty(manifest?.Name) ? Path.GetFileName(dir) : manifest!.Name;
@@ -84,12 +99,12 @@ public sealed class ModCatalog
             DisplayName = name,
             Version = manifest?.Version ?? string.Empty,
             Author = manifest?.Author ?? string.Empty,
-            IsEnabled = true, // present in Mods/ == active
+            IsEnabled = enabled,
             Location = dir,
         };
     }
 
-    private static ManagedMod FromJiangyu(string dir)
+    private static ManagedMod FromJiangyu(string dir, bool enabled)
     {
         var name = Path.GetFileName(dir);
         var version = string.Empty;
@@ -115,7 +130,7 @@ public sealed class ModCatalog
             DisplayName = name,
             Version = version,
             Author = author,
-            IsEnabled = true,
+            IsEnabled = enabled,
             Location = dir,
         };
     }
@@ -134,19 +149,19 @@ public sealed class ModCatalog
         return null;
     }
 
-    private static IEnumerable<ManagedMod> ScanLooseDlls(string modsPath)
+    private static IEnumerable<ManagedMod> ScanLooseDlls(string root, bool enabled)
     {
-        foreach (var file in Directory.EnumerateFiles(modsPath))
+        foreach (var file in Directory.EnumerateFiles(root))
         {
             var fileName = Path.GetFileName(file);
 
-            var enabled = fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
-            var disabled = fileName.EndsWith(".dll" + DisabledSuffix, StringComparison.OrdinalIgnoreCase);
-            if (!enabled && !disabled)
+            var isDll = fileName.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+            var isDisabledDll = fileName.EndsWith(".dll" + DisabledSuffix, StringComparison.OrdinalIgnoreCase);
+            if (!isDll && !isDisabledDll)
                 continue;
 
             // Normalise to the "foo.dll" name regardless of the .disabled suffix.
-            var baseName = enabled ? fileName : fileName[..^DisabledSuffix.Length];
+            var baseName = isDll ? fileName : fileName[..^DisabledSuffix.Length];
 
             if (IsSystemDll(baseName))
                 continue;
@@ -169,7 +184,8 @@ public sealed class ModCatalog
                 DisplayName = displayName,
                 Version = info?.Version ?? string.Empty,
                 Author = info?.Author ?? string.Empty,
-                IsEnabled = enabled,
+                // In-place ".dll.disabled" is disabled even under Mods/; DisabledMods/ is always disabled.
+                IsEnabled = enabled && isDll,
                 Location = file,
             };
         }
