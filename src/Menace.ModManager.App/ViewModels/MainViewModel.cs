@@ -19,8 +19,19 @@ public sealed class MainViewModel : ReactiveObject
     private readonly ModEnableService _enableService = new();
     private readonly ModInstallService _installService = new();
     private readonly JiangyuLoaderInstaller _jiangyu = new();
+    private readonly MelonLoaderInstaller _melonLoader = new();
 
     public ObservableCollection<ManagedMod> Mods { get; } = new();
+
+    /// <summary>MelonLoader versions offered in the picker ("latest" first, then release tags).</summary>
+    public ObservableCollection<string> MelonLoaderVersions { get; } = new() { "latest" };
+
+    private string? _selectedMelonLoaderVersion = "latest";
+    public string? SelectedMelonLoaderVersion
+    {
+        get => _selectedMelonLoaderVersion;
+        set => this.RaiseAndSetIfChanged(ref _selectedMelonLoaderVersion, value);
+    }
 
     /// <summary>Jiangyu loader versions offered in the picker ("latest" first, then release tags).</summary>
     public ObservableCollection<string> JiangyuVersions { get; } = new() { "latest" };
@@ -70,18 +81,19 @@ public sealed class MainViewModel : ReactiveObject
     public MainViewModel()
     {
         Refresh();
-        // Populate the Jiangyu version list in the background; "latest" works regardless.
-        _ = LoadJiangyuVersionsAsync();
+        // Populate the version lists in the background; "latest" works regardless.
+        _ = LoadVersionListAsync(_melonLoader.ListVersionsAsync, MelonLoaderVersions);
+        _ = LoadVersionListAsync(_jiangyu.ListVersionsAsync, JiangyuVersions);
     }
 
-    private async System.Threading.Tasks.Task LoadJiangyuVersionsAsync()
+    private static async Task LoadVersionListAsync(
+        Func<CancellationToken, Task<IReadOnlyList<string>>> list, ObservableCollection<string> into)
     {
         try
         {
-            var versions = await _jiangyu.ListVersionsAsync();
-            foreach (var v in versions)
-                if (!JiangyuVersions.Contains(v))
-                    JiangyuVersions.Add(v);
+            foreach (var v in await list(CancellationToken.None))
+                if (!into.Contains(v))
+                    into.Add(v);
         }
         catch
         {
@@ -111,11 +123,29 @@ public sealed class MainViewModel : ReactiveObject
         Status = $"Jiangyu loader installed — {Status}";
     }
 
-    /// <summary>Install/update MelonLoader (the framework) into the game.</summary>
-    public Task InstallMelonLoaderAsync() =>
-        RunLoaderInstall("MelonLoader", (installer, cb) => installer.InstallMelonLoaderAsync(cb));
+    /// <summary>Download + install the selected MelonLoader version into the game.</summary>
+    public async Task InstallMelonLoaderAsync()
+    {
+        var version = string.IsNullOrEmpty(SelectedMelonLoaderVersion) || SelectedMelonLoaderVersion == "latest"
+            ? null
+            : SelectedMelonLoaderVersion;
 
-    /// <summary>Install/update the Menace Modpack Loader runtime into the game.</summary>
+        Status = version is null ? "Downloading latest MelonLoader…" : $"Downloading MelonLoader {version}…";
+        try
+        {
+            await _melonLoader.InstallAsync(version);
+        }
+        catch (Exception ex)
+        {
+            Status = $"MelonLoader install failed: {ex.Message}";
+            return;
+        }
+
+        Refresh();
+        Status = $"MelonLoader installed — {Status}";
+    }
+
+    /// <summary>Install/update the Menace Modpack Loader runtime (bundled) into the game.</summary>
     public Task InstallModpackLoaderAsync() =>
         RunLoaderInstall("Modpack Loader", (installer, cb) => installer.InstallModpackLoaderAsync(cb));
 

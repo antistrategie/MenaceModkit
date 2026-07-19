@@ -20,8 +20,11 @@
         <Grid ColumnDefinitions="150,*,Auto" RowDefinitions="Auto,Auto,Auto">
 
           <TextBlock Grid.Row="0" Grid.Column="0" Text="MelonLoader" VerticalAlignment="Center" />
-          <TextBlock Grid.Row="0" Grid.Column="1" Text="{Binding MelonLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" />
-          <Button Grid.Row="0" Grid.Column="2" Content="Install / Update" Click="OnInstallMelonLoaderClick" />
+          <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <TextBlock Text="{Binding MelonLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" />
+            <ComboBox ItemsSource="{Binding MelonLoaderVersions}" SelectedItem="{Binding SelectedMelonLoaderVersion}" MinWidth="130" />
+          </StackPanel>
+          <Button Grid.Row="0" Grid.Column="2" Content="Get" Click="OnInstallMelonLoaderClick" />
 
           <TextBlock Grid.Row="1" Grid.Column="0" Text="Modpack Loader" VerticalAlignment="Center" Margin="0,8,0,0" />
           <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ModpackLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" Margin="0,8,0,0" />
