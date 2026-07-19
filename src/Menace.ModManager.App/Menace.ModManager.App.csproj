@@ -23,4 +23,23 @@
     <PackageReference Include="Avalonia.ReactiveUI" Version="11.3.7" />
   </ItemGroup>
 
+  <!--
+    Bundled loader payloads + version manifest, resolved at runtime under
+    AppContext.BaseDirectory/third_party by ModLoaderInstaller/ComponentManager.
+    (MelonLoader's folder is populated by the full modkit build; the glob is a no-op if empty.)
+  -->
+  <ItemGroup>
+    <None Include="..\..\third_party\bundled\ModpackLoader\**\*.*"
+          Link="third_party\bundled\ModpackLoader\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\third_party\bundled\MelonLoader\**\*.*"
+          Link="third_party\bundled\MelonLoader\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\third_party\versions.json" Link="third_party\versions.json"
+          CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\third_party\versions-beta.json" Link="third_party\versions-beta.json"
+          Condition="Exists('..\..\third_party\versions-beta.json')"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

@@ -1,5 +1,9 @@
+using System;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading.Tasks;
+using Avalonia.Threading;
+using Menace.Modkit.App.Services; // ModLoaderInstaller (kept its original namespace when extracted)
 using Menace.Modkit.ModManagement;
 using ReactiveUI;
 
@@ -84,6 +88,42 @@ public sealed class MainViewModel : ReactiveObject
 
         Refresh();
         Status = $"Jiangyu loader installed — {Status}";
+    }
+
+    /// <summary>Install/update MelonLoader (the framework) into the game.</summary>
+    public Task InstallMelonLoaderAsync() =>
+        RunLoaderInstall("MelonLoader", (installer, cb) => installer.InstallMelonLoaderAsync(cb));
+
+    /// <summary>Install/update the Menace Modpack Loader runtime into the game.</summary>
+    public Task InstallModpackLoaderAsync() =>
+        RunLoaderInstall("Modpack Loader", (installer, cb) => installer.InstallModpackLoaderAsync(cb));
+
+    private async Task RunLoaderInstall(string label, Func<ModLoaderInstaller, Action<string>, Task<bool>> install)
+    {
+        var gamePath = ModkitConfig.Current.GameInstallPath;
+        if (string.IsNullOrEmpty(gamePath))
+        {
+            Status = "Game not located — set MENACE_GAME_PATH.";
+            return;
+        }
+
+        Status = $"Installing {label}…";
+        bool ok;
+        try
+        {
+            // Run off the UI thread; marshal progress messages back to it.
+            ok = await Task.Run(() => install(
+                new ModLoaderInstaller(gamePath),
+                msg => Dispatcher.UIThread.Post(() => Status = msg)));
+        }
+        catch (Exception ex)
+        {
+            Status = $"{label} install failed: {ex.Message}";
+            return;
+        }
+
+        Refresh();
+        Status = ok ? $"{label} installed." : $"{label} install failed (see modkit.log).";
     }
 
     public void Refresh()

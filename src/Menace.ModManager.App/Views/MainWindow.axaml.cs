@@ -54,6 +54,18 @@ public partial class MainWindow : Window
             await vm.InstallJiangyuLoaderAsync();
     }
 
+    private async void OnInstallMelonLoaderClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is { } vm)
+            await vm.InstallMelonLoaderAsync();
+    }
+
+    private async void OnInstallModpackLoaderClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is { } vm)
+            await vm.InstallModpackLoaderAsync();
+    }
+
     private async void OnUninstallClick(object? sender, RoutedEventArgs e)
     {
         if (Vm?.Selected is not { } mod)
