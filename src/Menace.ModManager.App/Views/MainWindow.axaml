@@ -7,6 +7,12 @@
 
     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
       <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+        <TextBlock Text="Jiangyu loader:" VerticalAlignment="Center" Opacity="0.7" />
+        <ComboBox ItemsSource="{Binding JiangyuVersions}"
+                  SelectedItem="{Binding SelectedJiangyuVersion}"
+                  MinWidth="110" />
+        <Button Content="Get" Click="OnGetJiangyuClick" />
+        <Border Width="1" Background="#40808080" Margin="4,2" />
         <Button Content="Add folder…" Click="OnAddFolderClick" />
         <Button Content="Add DLL…" Click="OnAddDllClick" />
         <Button Content="Uninstall" Click="OnUninstallClick" />

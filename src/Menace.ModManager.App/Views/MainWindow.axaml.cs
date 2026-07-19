@@ -48,6 +48,12 @@ public partial class MainWindow : Window
             Vm?.Install(path);
     }
 
+    private async void OnGetJiangyuClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is { } vm)
+            await vm.InstallJiangyuLoaderAsync();
+    }
+
     private async void OnUninstallClick(object? sender, RoutedEventArgs e)
     {
         if (Vm?.Selected is not { } mod)

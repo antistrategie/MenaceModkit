@@ -14,8 +14,19 @@ public sealed class MainViewModel : ReactiveObject
     private readonly ModCatalog _catalog = new();
     private readonly ModEnableService _enableService = new();
     private readonly ModInstallService _installService = new();
+    private readonly JiangyuLoaderInstaller _jiangyu = new();
 
     public ObservableCollection<ManagedMod> Mods { get; } = new();
+
+    /// <summary>Jiangyu loader versions offered in the picker ("latest" first, then release tags).</summary>
+    public ObservableCollection<string> JiangyuVersions { get; } = new() { "latest" };
+
+    private string? _selectedJiangyuVersion = "latest";
+    public string? SelectedJiangyuVersion
+    {
+        get => _selectedJiangyuVersion;
+        set => this.RaiseAndSetIfChanged(ref _selectedJiangyuVersion, value);
+    }
 
     private string _status = string.Empty;
     public string Status
@@ -31,7 +42,49 @@ public sealed class MainViewModel : ReactiveObject
         set => this.RaiseAndSetIfChanged(ref _selected, value);
     }
 
-    public MainViewModel() => Refresh();
+    public MainViewModel()
+    {
+        Refresh();
+        // Populate the Jiangyu version list in the background; "latest" works regardless.
+        _ = LoadJiangyuVersionsAsync();
+    }
+
+    private async System.Threading.Tasks.Task LoadJiangyuVersionsAsync()
+    {
+        try
+        {
+            var versions = await _jiangyu.ListVersionsAsync();
+            foreach (var v in versions)
+                if (!JiangyuVersions.Contains(v))
+                    JiangyuVersions.Add(v);
+        }
+        catch
+        {
+            // Offline or rate-limited — the "latest" option still installs on demand.
+        }
+    }
+
+    /// <summary>Download + install the selected Jiangyu loader version into Mods/, then rescan.</summary>
+    public async System.Threading.Tasks.Task InstallJiangyuLoaderAsync()
+    {
+        var version = string.IsNullOrEmpty(SelectedJiangyuVersion) || SelectedJiangyuVersion == "latest"
+            ? null
+            : SelectedJiangyuVersion;
+
+        Status = version is null ? "Downloading latest Jiangyu loader…" : $"Downloading Jiangyu loader {version}…";
+        try
+        {
+            await _jiangyu.InstallAsync(version);
+        }
+        catch (Exception ex)
+        {
+            Status = $"Jiangyu loader install failed: {ex.Message}";
+            return;
+        }
+
+        Refresh();
+        Status = $"Jiangyu loader installed — {Status}";
+    }
 
     public void Refresh()
     {
