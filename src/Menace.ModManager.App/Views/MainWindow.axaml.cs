@@ -15,6 +15,8 @@ public partial class MainWindow : Window
 
     private void OnRefreshClick(object? sender, RoutedEventArgs e) => Vm?.Refresh();
 
+    private void OnDismissErrorClick(object? sender, RoutedEventArgs e) => Vm?.DismissError();
+
     private void OnToggleClick(object? sender, RoutedEventArgs e)
     {
         if (sender is CheckBox { DataContext: ManagedMod mod })
@@ -38,8 +40,8 @@ public partial class MainWindow : Window
         });
 
         var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
-        if (!string.IsNullOrEmpty(path))
-            Vm?.Install(path);
+        if (!string.IsNullOrEmpty(path) && Vm is { } vm)
+            await vm.InstallAsync(path);
     }
 
     private async void OnGetJiangyuClick(object? sender, RoutedEventArgs e)
@@ -89,6 +91,6 @@ public partial class MainWindow : Window
             .ShowDialog<bool>(this);
 
         if (confirmed)
-            Vm.UninstallSelected();
+            await Vm.UninstallSelectedAsync();
     }
 }

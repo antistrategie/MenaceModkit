@@ -67,15 +67,15 @@ public sealed class ModInstallService
     private static string InstallFolder(string sourceDir, string modsPath)
     {
         var name = Path.GetFileName(sourceDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var target = RequireFreeTarget(modsPath, name);
+        var target = PrepareTarget(modsPath, name);
         CopyDirectory(sourceDir, target);
         return target;
     }
 
     private static string InstallDll(string dllPath, string modsPath)
     {
-        var target = RequireFreeTarget(modsPath, Path.GetFileName(dllPath));
-        File.Copy(dllPath, target);
+        var target = PrepareTarget(modsPath, Path.GetFileName(dllPath));
+        File.Copy(dllPath, target, overwrite: true);
         return target;
     }
 
@@ -105,8 +105,8 @@ public sealed class ModInstallService
             if (rootDirs.Length == 0 && rootFiles.Length == 1 &&
                 rootFiles[0].EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
             {
-                var target = RequireFreeTarget(modsPath, Path.GetFileName(rootFiles[0]));
-                File.Copy(rootFiles[0], target);
+                var target = PrepareTarget(modsPath, Path.GetFileName(rootFiles[0]));
+                File.Copy(rootFiles[0], target, overwrite: true);
                 return target;
             }
 
@@ -139,18 +139,24 @@ public sealed class ModInstallService
         return name;
     }
 
-    private static string RequireFreeTarget(string modsPath, string name)
+    // Compute the install target, clearing any existing install of the same name so a
+    // re-install acts as an update (a clean replace, no stale files left behind).
+    private static string PrepareTarget(string modsPath, string name)
     {
         var target = Path.Combine(modsPath, name);
-        if (Directory.Exists(target) || File.Exists(target))
-            throw new IOException($"'{name}' is already installed.");
+        if (Directory.Exists(target))
+            Directory.Delete(target, recursive: true);
+        else if (File.Exists(target))
+            File.Delete(target);
         return target;
     }
 
     private static string PlaceDirectory(string sourceDir, string target)
     {
-        if (Directory.Exists(target) || File.Exists(target))
-            throw new IOException($"'{Path.GetFileName(target)}' is already installed.");
+        if (Directory.Exists(target))
+            Directory.Delete(target, recursive: true);
+        else if (File.Exists(target))
+            File.Delete(target);
         // Copy (not move) so it works across volumes and leaves the temp dir for cleanup.
         CopyDirectory(sourceDir, target);
         return target;

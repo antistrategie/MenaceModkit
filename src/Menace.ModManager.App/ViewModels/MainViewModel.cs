@@ -96,6 +96,33 @@ public sealed class MainViewModel : ReactiveObject
         private set => this.RaiseAndSetIfChanged(ref _jiangyuLoaderStatus, value);
     }
 
+    private bool _isBusy;
+    /// <summary>True while a long operation runs — drives the busy overlay and disables controls.</summary>
+    public bool IsBusy
+    {
+        get => _isBusy;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _isBusy, value);
+            this.RaisePropertyChanged(nameof(NotBusy));
+        }
+    }
+    public bool NotBusy => !_isBusy;
+
+    private string? _errorMessage;
+    /// <summary>Last operation error, shown prominently until dismissed or the next op succeeds.</summary>
+    public string? ErrorMessage
+    {
+        get => _errorMessage;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _errorMessage, value);
+            this.RaisePropertyChanged(nameof(HasError));
+        }
+    }
+    public bool HasError => !string.IsNullOrEmpty(_errorMessage);
+    public void DismissError() => ErrorMessage = null;
+
     public MainViewModel()
     {
         Refresh();
@@ -135,76 +162,66 @@ public sealed class MainViewModel : ReactiveObject
         return string.IsNullOrEmpty(tag) ? null : tag;
     }
 
-    /// <summary>Download + install the selected Jiangyu loader version into Mods/, then rescan.</summary>
-    public async System.Threading.Tasks.Task InstallJiangyuLoaderAsync()
+    /// <summary>
+    /// Run a long operation with the busy overlay up: clears any error, shows a status,
+    /// surfaces failures as <see cref="ErrorMessage"/>, and rescans when done.
+    /// </summary>
+    private async Task ExecuteAsync(string busyStatus, Func<Task> work)
     {
-        var version = NormalizeVersion(SelectedJiangyuVersion);
-
-        Status = version is null ? "Downloading latest Jiangyu loader…" : $"Downloading Jiangyu loader {version}…";
+        ErrorMessage = null;
+        Status = busyStatus;
+        IsBusy = true;
         try
         {
-            await _jiangyu.InstallAsync(version);
+            await work();
         }
         catch (Exception ex)
         {
-            Status = $"Jiangyu loader install failed: {ex.Message}";
-            return;
+            ErrorMessage = ex.Message;
+        }
+        finally
+        {
+            IsBusy = false;
         }
 
         Refresh();
-        Status = $"Jiangyu loader installed — {Status}";
+    }
+
+    /// <summary>Download + install the selected Jiangyu loader version into Mods/.</summary>
+    public Task InstallJiangyuLoaderAsync()
+    {
+        var version = NormalizeVersion(SelectedJiangyuVersion);
+        return ExecuteAsync(
+            version is null ? "Downloading latest Jiangyu loader…" : $"Downloading Jiangyu loader {version}…",
+            () => _jiangyu.InstallAsync(version));
     }
 
     /// <summary>Download + install the selected MelonLoader version into the game.</summary>
-    public async Task InstallMelonLoaderAsync()
+    public Task InstallMelonLoaderAsync()
     {
         var version = NormalizeVersion(SelectedMelonLoaderVersion);
-
-        Status = version is null ? "Downloading latest MelonLoader…" : $"Downloading MelonLoader {version}…";
-        try
-        {
-            await _melonLoader.InstallAsync(version);
-        }
-        catch (Exception ex)
-        {
-            Status = $"MelonLoader install failed: {ex.Message}";
-            return;
-        }
-
-        Refresh();
-        Status = $"MelonLoader installed — {Status}";
+        return ExecuteAsync(
+            version is null ? "Downloading latest MelonLoader…" : $"Downloading MelonLoader {version}…",
+            () => _melonLoader.InstallAsync(version));
     }
 
     /// <summary>Install/update the Menace Modpack Loader runtime (bundled) into the game.</summary>
-    public Task InstallModpackLoaderAsync() =>
-        RunLoaderInstall("Modpack Loader", (installer, cb) => installer.InstallModpackLoaderAsync(cb));
-
-    private async Task RunLoaderInstall(string label, Func<ModLoaderInstaller, Action<string>, Task<bool>> install)
+    public Task InstallModpackLoaderAsync()
     {
         var gamePath = ModkitConfig.Current.GameInstallPath;
         if (string.IsNullOrEmpty(gamePath))
         {
-            Status = "Game not located — set MENACE_GAME_PATH.";
-            return;
+            ErrorMessage = "Game not located — set MENACE_GAME_PATH.";
+            return Task.CompletedTask;
         }
 
-        Status = $"Installing {label}…";
-        bool ok;
-        try
+        return ExecuteAsync("Installing Modpack Loader…", async () =>
         {
-            // Run off the UI thread; marshal progress messages back to it.
-            ok = await Task.Run(() => install(
-                new ModLoaderInstaller(gamePath),
-                msg => Dispatcher.UIThread.Post(() => Status = msg)));
-        }
-        catch (Exception ex)
-        {
-            Status = $"{label} install failed: {ex.Message}";
-            return;
-        }
-
-        Refresh();
-        Status = ok ? $"{label} installed." : $"{label} install failed (see modkit.log).";
+            var ok = await Task.Run(() => new ModLoaderInstaller(gamePath)
+                .InstallModpackLoaderAsync(msg => Dispatcher.UIThread.Post(() => Status = msg)));
+            if (!ok)
+                throw new InvalidOperationException("Modpack Loader install failed (see modkit.log).");
+        });
     }
 
     public void Refresh()
@@ -293,68 +310,43 @@ public sealed class MainViewModel : ReactiveObject
         if (!mod.CanToggle)
             return;
 
+        ErrorMessage = null;
         try
         {
             _enableService.SetEnabled(mod, !mod.IsEnabled);
         }
         catch (Exception ex)
         {
-            Status = $"Failed to toggle {mod.DisplayName}: {ex.Message}";
+            ErrorMessage = $"Couldn't toggle {mod.DisplayName}: {ex.Message}";
             return;
         }
 
         Refresh();
     }
 
-    /// <summary>Install a mod from a source folder or .dll, then rescan.</summary>
-    public void Install(string sourcePath)
-    {
-        try
-        {
-            var installed = _installService.Install(sourcePath);
-            Refresh();
-            Status = $"Installed {System.IO.Path.GetFileName(installed)} — {Status}";
-        }
-        catch (Exception ex)
-        {
-            Status = $"Install failed: {ex.Message}";
-        }
-    }
+    /// <summary>Install (or update) a mod from an archive/folder/.dll.</summary>
+    public Task InstallAsync(string sourcePath) =>
+        ExecuteAsync(
+            $"Installing {System.IO.Path.GetFileName(sourcePath)}…",
+            () => Task.Run(() => _installService.Install(sourcePath)));
 
-    /// <summary>Compile (if needed) and deploy a source modpack folder, then rescan.</summary>
-    public async Task DeploySourceAsync(string sourceDir)
+    /// <summary>Compile (if needed) and deploy a source modpack folder.</summary>
+    public Task DeploySourceAsync(string sourceDir)
     {
         var progress = new Progress<string>(s => Status = s);
-        try
-        {
-            // Off the UI thread — compilation can be heavy.
-            await Task.Run(() => _deployService.DeployAsync(sourceDir, progress));
-        }
-        catch (Exception ex)
-        {
-            Status = $"Deploy failed: {ex.Message}";
-            return;
-        }
-
-        Refresh();
+        return ExecuteAsync(
+            "Deploying source modpack…",
+            () => Task.Run(() => _deployService.DeployAsync(sourceDir, progress)));
     }
 
-    /// <summary>Delete the selected mod from disk, then rescan.</summary>
-    public void UninstallSelected()
+    /// <summary>Delete the selected mod from disk.</summary>
+    public Task UninstallSelectedAsync()
     {
         if (Selected is not { } mod || !mod.CanToggle)
-            return;
+            return Task.CompletedTask;
 
-        try
-        {
-            _installService.Uninstall(mod);
-        }
-        catch (Exception ex)
-        {
-            Status = $"Uninstall failed: {ex.Message}";
-            return;
-        }
-
-        Refresh();
+        return ExecuteAsync(
+            $"Uninstalling {mod.DisplayName}…",
+            () => Task.Run(() => _installService.Uninstall(mod)));
     }
 }

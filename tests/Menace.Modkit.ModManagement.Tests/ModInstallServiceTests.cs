@@ -66,16 +66,21 @@ public sealed class ModInstallServiceTests : IDisposable
     }
 
     [Fact]
-    public void Install_AlreadyPresent_Throws()
+    public void Install_AlreadyPresent_ReplacesAsUpdate()
     {
         var srcDir = Path.Combine(_gameDir, "src", "Dup");
         Directory.CreateDirectory(srcDir);
         File.WriteAllText(Path.Combine(srcDir, "modpack.json"), @"{""manifestVersion"":2,""name"":""Dup""}");
 
         var svc = new ModInstallService(_config);
+        var target = svc.Install(srcDir);
+
+        // Leave a stale file in the installed copy, then reinstall — it should be gone (clean replace).
+        File.WriteAllText(Path.Combine(target, "stale.txt"), "old");
         svc.Install(srcDir);
 
-        Assert.Throws<IOException>(() => svc.Install(srcDir));
+        Assert.False(File.Exists(Path.Combine(target, "stale.txt")));
+        Assert.True(File.Exists(Path.Combine(target, "modpack.json")));
     }
 
     [Fact]
