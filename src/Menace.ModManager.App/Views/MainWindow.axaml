@@ -6,7 +6,12 @@
   <DockPanel Margin="12">
 
     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,8">
-      <Button DockPanel.Dock="Right" Content="Refresh" Click="OnRefreshClick" />
+      <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" Spacing="6">
+        <Button Content="Add folder…" Click="OnAddFolderClick" />
+        <Button Content="Add DLL…" Click="OnAddDllClick" />
+        <Button Content="Uninstall" Click="OnUninstallClick" />
+        <Button Content="Refresh" Click="OnRefreshClick" />
+      </StackPanel>
       <TextBlock Text="{Binding Status}" VerticalAlignment="Center" FontWeight="SemiBold" />
     </DockPanel>
 
@@ -18,7 +23,7 @@
       <TextBlock Grid.Column="4" Text="Author" Opacity="0.6" />
     </Grid>
 
-    <ListBox ItemsSource="{Binding Mods}">
+    <ListBox ItemsSource="{Binding Mods}" SelectedItem="{Binding Selected}">
       <ListBox.ItemTemplate>
         <DataTemplate>
           <Grid ColumnDefinitions="60,120,*,110,160">

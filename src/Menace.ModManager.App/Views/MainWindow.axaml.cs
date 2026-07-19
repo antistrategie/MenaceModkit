@@ -1,6 +1,7 @@
 using Avalonia.Controls;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
+using Avalonia.Platform.Storage;
 using Menace.Modkit.ModManagement;
 using Menace.ModManager.ViewModels;
 
@@ -10,12 +11,59 @@ public partial class MainWindow : Window
 {
     public MainWindow() => AvaloniaXamlLoader.Load(this);
 
-    private void OnRefreshClick(object? sender, RoutedEventArgs e)
-        => (DataContext as MainViewModel)?.Refresh();
+    private MainViewModel? Vm => DataContext as MainViewModel;
+
+    private void OnRefreshClick(object? sender, RoutedEventArgs e) => Vm?.Refresh();
 
     private void OnToggleClick(object? sender, RoutedEventArgs e)
     {
-        if (sender is CheckBox { DataContext: ManagedMod mod } && DataContext is MainViewModel vm)
-            vm.Toggle(mod);
+        if (sender is CheckBox { DataContext: ManagedMod mod })
+            Vm?.Toggle(mod);
+    }
+
+    private async void OnAddFolderClick(object? sender, RoutedEventArgs e)
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select a mod folder to install",
+            AllowMultiple = false,
+        });
+
+        var path = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+        if (!string.IsNullOrEmpty(path))
+            Vm?.Install(path);
+    }
+
+    private async void OnAddDllClick(object? sender, RoutedEventArgs e)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Select a mod DLL to install",
+            AllowMultiple = false,
+            FileTypeFilter = new[] { new FilePickerFileType("MelonLoader mod") { Patterns = new[] { "*.dll" } } },
+        });
+
+        var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
+        if (!string.IsNullOrEmpty(path))
+            Vm?.Install(path);
+    }
+
+    private async void OnUninstallClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm?.Selected is not { } mod)
+            return;
+
+        if (!mod.CanToggle)
+        {
+            Vm.Refresh(); // no-op refresh; protected mods can't be removed
+            return;
+        }
+
+        var confirmed = await new ConfirmDialog(
+            $"Delete \"{mod.DisplayName}\" from disk?\n\nThis removes its files and cannot be undone.")
+            .ShowDialog<bool>(this);
+
+        if (confirmed)
+            Vm.UninstallSelected();
     }
 }
