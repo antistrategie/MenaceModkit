@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -21,6 +22,22 @@ public partial class MainWindow : Window
         AddHandler(DragDrop.DragEnterEvent, OnDragEnter);
         AddHandler(DragDrop.DragOverEvent, OnDragOver);
         AddHandler(DragDrop.DropEvent, OnDrop);
+        // Paste-to-install: on Wayland the compositor's XWayland DnD bridge often never
+        // delivers drags to this (X11) window, but the clipboard bridge is reliable —
+        // copy a file in the file manager, Ctrl+V here.
+        AddHandler(KeyDownEvent, OnKeyDown);
+    }
+
+    private async void OnKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.Key != Key.V || !e.KeyModifiers.HasFlag(KeyModifiers.Control))
+            return;
+        if (Vm is not { IsBusy: false } vm)
+            return;
+
+        var text = await (Clipboard?.GetTextAsync() ?? Task.FromResult<string?>(null));
+        foreach (var path in ParsePathsFromText(text))
+            await vm.InstallAsync(path);
     }
 
     private MainViewModel? Vm => DataContext as MainViewModel;
@@ -77,7 +94,16 @@ public partial class MainWindow : Window
         if (paths.Count > 0)
             return paths;
 
-        var text = e.DataTransfer?.TryGetText();
+        return ParsePathsFromText(e.DataTransfer?.TryGetText());
+    }
+
+    /// <summary>
+    /// Parse a uri-list / newline-separated path payload (file:// URIs or absolute
+    /// paths) into existing local paths.
+    /// </summary>
+    private static List<string> ParsePathsFromText(string? text)
+    {
+        var paths = new List<string>();
         if (string.IsNullOrWhiteSpace(text))
             return paths;
 
