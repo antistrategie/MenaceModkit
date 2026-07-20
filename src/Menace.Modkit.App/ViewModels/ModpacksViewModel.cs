@@ -263,10 +263,11 @@ public sealed class ModpacksViewModel : ViewModelBase
         // above are skipped by name; infrastructure (loaders) is managed elsewhere.
         try
         {
+            // Include disabled mods too (the catalog scans DisabledMods/): otherwise a mod
+            // the user just disabled would vanish from the list with no way to re-enable it.
             foreach (var mod in new Menace.Modkit.ModManagement.ModCatalog().Scan())
             {
                 if (mod.Kind == Menace.Modkit.ModManagement.ModKind.Infrastructure) continue;
-                if (!mod.IsEnabled) continue;
                 if (seenNames.Contains(mod.DisplayName)) continue;
 
                 var isDll = mod.Location.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
@@ -282,8 +283,10 @@ public sealed class ModpacksViewModel : ViewModelBase
                     _ => "MelonLoader mod",
                 };
 
+                // isDeployed tracks enabled state: an enabled mod shows "Undeploy" (disable),
+                // a disabled one shows "Deploy" (re-enable) — so the toggle round-trips.
                 var vm = new ModpackItemViewModel(mod.DisplayName, mod.Author, mod.VersionDisplay,
-                    kindLabel, null, fileName, true, _modpackManager, isExternal: true, source: mod);
+                    kindLabel, null, fileName, mod.IsEnabled, _modpackManager, isExternal: true, source: mod);
                 if (mod.LoadOrder is { } order)
                     vm.LoadOrder = order; // synthetic manifest: no SaveMetadata side-effect
 
