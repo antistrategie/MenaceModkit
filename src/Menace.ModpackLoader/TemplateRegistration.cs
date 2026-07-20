@@ -56,9 +56,7 @@ internal static class TemplateRegistration
         if (!TryGetTemplateMap(templateType, out var map))
             return false;
 
-        if (!map.ContainsKey(cloneId))
-            RegisterIntoSlot(templateType, map, templateType, cloneId, dataTemplate);
-
+        RegisterIntoSlot(templateType, map, templateType, cloneId, dataTemplate);
         MirrorToAncestors(templateType, cloneId, dataTemplate);
         return true;
     }
@@ -85,13 +83,19 @@ internal static class TemplateRegistration
     /// Inserts the clone into the slot's <c>m_TemplateMaps</c> inner dict and extends the
     /// matching <c>m_TemplateArrays</c> bucket. Array-extend failure is non-fatal:
     /// <c>Get&lt;T&gt;(id)</c> still resolves via the map; only <c>GetAll&lt;slotType&gt;</c>
-    /// consumers miss the clone. Caller gates idempotency — registering the same id twice
-    /// would double-extend the array.
+    /// consumers miss the clone. Idempotent: the map insert is skipped when the id is
+    /// present, and the array bucket is scanned for the clone before extending — so a
+    /// re-registration repairs a previously failed array extend instead of skipping it
+    /// (map insert and array extend can fail independently).
     /// </summary>
     private static void RegisterIntoSlot(
         Type slotType, Il2CppTemplateMap slotMap, Type declaredType, string cloneId, DataTemplate clone)
     {
-        slotMap[cloneId] = clone;
+        if (!slotMap.ContainsKey(cloneId))
+            slotMap[cloneId] = clone;
+
+        if (ArrayBucketContains(slotType, clone))
+            return;
 
         if (!TryExtendTemplateArray(slotType, clone))
         {
@@ -102,11 +106,66 @@ internal static class TemplateRegistration
     }
 
     /// <summary>
+    /// True when the <c>m_TemplateArrays</c> bucket for <paramref name="slotType"/>
+    /// already holds <paramref name="clone"/> (native pointer identity). Returns true on
+    /// reflection failure too: appending blindly could duplicate the clone in
+    /// <c>GetAll&lt;T&gt;()</c>, and the map entry alone keeps <c>Get&lt;T&gt;(id)</c> working.
+    /// Returns false when the bucket is missing — the extend path reports that case.
+    /// </summary>
+    private static bool ArrayBucketContains(Type slotType, DataTemplate clone)
+    {
+        try
+        {
+            var singleton = DataTemplateLoader.GetSingleton();
+            if (singleton == null)
+                return true;
+
+            var arrays = typeof(DataTemplateLoader)
+                .GetProperty("m_TemplateArrays", BindingFlags.Public | BindingFlags.Instance)
+                ?.GetValue(singleton);
+            if (arrays == null)
+                return true;
+
+            var il2cppType = Il2CppType.From(slotType);
+            var tryGetValue = il2cppType == null ? null : FindTryGetValue(arrays.GetType());
+            if (tryGetValue == null)
+                return true;
+
+            var lookup = new object[] { il2cppType, null };
+            if (!(bool)tryGetValue.Invoke(arrays, lookup) || lookup[1] is not Il2CppObjectBase bucket)
+                return false;
+
+            var bucketType = bucket.GetType();
+            var lengthProperty = bucketType.GetProperty("Length") ?? bucketType.GetProperty("Count");
+            var indexer = FindIntIndexer(bucketType);
+            if (lengthProperty == null || indexer == null)
+                return true;
+
+            var length = (int)lengthProperty.GetValue(bucket)!;
+            var slot = new object[1];
+            for (var i = 0; i < length; i++)
+            {
+                slot[0] = i;
+                if (indexer.GetValue(bucket, slot) is Il2CppObjectBase element
+                    && element.Pointer == clone.Pointer)
+                    return true;
+            }
+
+            return false;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
     /// Mirrors the clone into every ancestor <c>m_TemplateMaps</c>/<c>m_TemplateArrays</c>
     /// slot, walking <c>BaseType</c> upward to <c>DataTemplate</c>. The most-derived slot
     /// must already be registered by the caller. Each ancestor slot is force-materialised
     /// (via <c>GetAll&lt;Ancestor&gt;()</c>) before mirroring so lazy-snapshot consumers see
-    /// the clone in their first enumeration. Idempotent per ancestor via ContainsKey.
+    /// the clone in their first enumeration. Idempotency lives in
+    /// <see cref="RegisterIntoSlot"/>, which also repairs a half-registered slot.
     /// </summary>
     private static void MirrorToAncestors(Type resolvedType, string cloneId, DataTemplate clone)
     {
@@ -115,7 +174,7 @@ internal static class TemplateRegistration
         {
             EnsureSlotMaterialised(current);
 
-            if (TryGetTemplateMap(current, out var ancestorMap) && !ancestorMap.ContainsKey(cloneId))
+            if (TryGetTemplateMap(current, out var ancestorMap))
                 RegisterIntoSlot(current, ancestorMap, resolvedType, cloneId, clone);
 
             current = current.BaseType;

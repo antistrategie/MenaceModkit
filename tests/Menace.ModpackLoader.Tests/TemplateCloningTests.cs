@@ -84,6 +84,44 @@ public sealed class Il2CppCollectionReflectionTests
         Assert.False(ok);
         Assert.NotNull(error);
     }
+
+    [Fact]
+    public void TryRebuildReferenceArray_ManagedArray_ProducesIndependentCopyWithSharedElements()
+    {
+        // Managed T[] has no (T[]) wrapper ctor and no Item indexer property, so it must
+        // take the direct-copy branch rather than the IL2CPP wrapper path.
+        var source = new[] { "a", "b", "c" };
+
+        var ok = Il2CppCollectionReflection.TryRebuildReferenceArray(
+            source, typeof(string[]), typeof(string), out var fresh, out var error);
+
+        Assert.True(ok, error);
+        var rebuilt = Assert.IsType<string[]>(fresh);
+        Assert.NotSame(source, rebuilt);          // independent container
+        Assert.Equal(source, rebuilt);            // same elements
+        rebuilt[0] = "changed";                   // mutating the copy…
+        Assert.Equal("a", source[0]);             // …never touches the source
+    }
+
+    [Fact]
+    public void TryRebuildReferenceArray_EmptyManagedArray_Succeeds()
+    {
+        var ok = Il2CppCollectionReflection.TryRebuildReferenceArray(
+            Array.Empty<int>(), typeof(int[]), typeof(int), out var fresh, out var error);
+
+        Assert.True(ok, error);
+        Assert.Empty((int[])fresh);
+    }
+
+    [Fact]
+    public void TryRebuildReferenceArray_NullSource_Fails()
+    {
+        var ok = Il2CppCollectionReflection.TryRebuildReferenceArray(
+            null, typeof(string[]), typeof(string), out _, out var error);
+
+        Assert.False(ok);
+        Assert.NotNull(error);
+    }
 }
 
 public sealed class OwnedElementTypeTests

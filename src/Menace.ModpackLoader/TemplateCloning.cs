@@ -94,6 +94,7 @@ public partial class ModpackLoaderMod
                 }
 
                 int clonedCount = 0;
+                var allApplied = true;
                 foreach (var (newName, sourceName) in cloneMap)
                 {
                     // Skip if a template with this name already exists (already cloned or native)
@@ -106,7 +107,8 @@ public partial class ModpackLoaderMod
 
                     if (!lookup.TryGetValue(sourceName, out var source))
                     {
-                        SdkLogger.Warning($"  Clone: source '{sourceName}' not found for clone '{newName}'");
+                        SdkLogger.Warning($"  Clone: source '{sourceName}' not found for clone '{newName}' — will retry on next scene");
+                        allApplied = false;
                         continue;
                     }
 
@@ -142,14 +144,20 @@ public partial class ModpackLoaderMod
                     catch (Exception ex)
                     {
                         SdkLogger.Error($"  Clone failed: {sourceName} -> {newName}: {ex.Message}");
+                        allApplied = false;
                     }
                 }
 
                 if (clonedCount > 0)
-                {
                     SdkLogger.Msg($"  Applied {clonedCount} clone(s) for {templateTypeName}");
+
+                // Only mark the whole type applied when every entry cloned (or already
+                // existed) — a partial success must stay retryable on later scenes.
+                // The already-exists gate above keeps retries from re-cloning winners.
+                if (allApplied)
                     _appliedCloneKeys.Add(cloneKey);
-                }
+                else
+                    allFound = false;
             }
             catch (Exception ex)
             {

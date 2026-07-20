@@ -44,8 +44,8 @@ internal static class TemplateCloneDeepCopy
 
         try
         {
-            DeepCopyCollectionContainers(il2cppClone, concreteType, cloneId);
-            DeepCopyOwnedReferences(il2cppClone, concreteType, cloneId);
+            var reallocated = DeepCopyCollectionContainers(il2cppClone, concreteType, cloneId);
+            DeepCopyOwnedReferences(il2cppClone, concreteType, cloneId, reallocated);
         }
         catch (Exception ex)
         {
@@ -53,10 +53,15 @@ internal static class TemplateCloneDeepCopy
         }
     }
 
-    private static void DeepCopyCollectionContainers(Il2CppObjectBase clone, Type concreteType, string cloneId)
+    // Returns the member keys ("P:Name"/"F:Name") whose containers were successfully
+    // reseated with a clone-owned instance. Members outside this set still share their
+    // container with the SOURCE template, so the owned-reference pass must not write
+    // into them.
+    private static HashSet<string> DeepCopyCollectionContainers(Il2CppObjectBase clone, Type concreteType, string cloneId)
     {
+        var reallocated = new HashSet<string>(StringComparer.Ordinal);
         var reflectionTarget = ReflectionTargetForConcreteType(clone, concreteType, cloneId);
-        if (reflectionTarget == null) return;
+        if (reflectionTarget == null) return reallocated;
 
         var type = reflectionTarget.GetType();
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
@@ -67,73 +72,93 @@ internal static class TemplateCloneDeepCopy
             if (prop.GetIndexParameters().Length != 0) continue;
             if (!prop.CanRead || !prop.CanWrite) continue;
             if (!seen.Add("P:" + prop.Name)) continue;
-            TryReallocCollectionContainer(
-                () => prop.GetValue(reflectionTarget),
-                v => prop.SetValue(reflectionTarget, v),
-                prop.PropertyType, prop.Name, cloneId);
+            if (TryReallocCollectionContainer(
+                    () => prop.GetValue(reflectionTarget),
+                    v => prop.SetValue(reflectionTarget, v),
+                    prop.PropertyType, prop.Name, cloneId))
+                reallocated.Add("P:" + prop.Name);
         }
 
         foreach (var field in type.GetFields(flags))
         {
             if (!seen.Add("F:" + field.Name)) continue;
             if (field.IsInitOnly) continue;
-            TryReallocCollectionContainer(
-                () => field.GetValue(reflectionTarget),
-                v => field.SetValue(reflectionTarget, v),
-                field.FieldType, field.Name, cloneId);
+            if (TryReallocCollectionContainer(
+                    () => field.GetValue(reflectionTarget),
+                    v => field.SetValue(reflectionTarget, v),
+                    field.FieldType, field.Name, cloneId))
+                reallocated.Add("F:" + field.Name);
         }
+
+        return reallocated;
     }
 
-    private static void TryReallocCollectionContainer(
+    private static bool TryReallocCollectionContainer(
         Func<object> reader, Action<object> writer, Type memberType, string memberName, string cloneId)
     {
         var listElement = Il2CppCollectionReflection.GetListElementType(memberType);
         if (listElement != null)
         {
-            TryRebuildAndWrite(
+            return TryRebuildAndWrite(
                 reader, writer,
                 src => Il2CppCollectionReflection.TryRebuildList(src, memberType, listElement, out var f, out var e)
                     ? (f, (string)null) : ((object)null, e),
                 "list", memberName, cloneId);
-            return;
         }
 
         var arrayElement = Il2CppCollectionReflection.GetArrayElementType(memberType);
         if (arrayElement != null)
         {
-            TryRebuildAndWrite(
+            return TryRebuildAndWrite(
                 reader, writer,
                 src => Il2CppCollectionReflection.TryRebuildReferenceArray(src, memberType, arrayElement, out var f, out var e)
                     ? (f, (string)null) : ((object)null, e),
                 "array", memberName, cloneId);
         }
+
+        return false;
     }
 
     // Common read-rebuild-write skeleton; the rebuild step is injected so this serves
-    // both list and array variants.
-    private static void TryRebuildAndWrite(
+    // both list and array variants. Returns true only when the fresh container was
+    // actually written back.
+    private static bool TryRebuildAndWrite(
         Func<object> reader, Action<object> writer,
         Func<object, (object fresh, string error)> rebuild,
         string kind, string memberName, string cloneId)
     {
         object source;
         try { source = reader(); }
-        catch { return; }
-        if (source == null) return;
+        catch { return false; }
+        if (source == null) return false;
 
-        var (fresh, error) = rebuild(source);
+        // The rebuild helpers guard their own element loops, but their reflection
+        // lookups (GetProperty("Item") can be ambiguous, etc.) may throw before that;
+        // one pathological member must not abort the pass for the rest.
+        object fresh;
+        string error;
+        try { (fresh, error) = rebuild(source); }
+        catch (Exception ex)
+        {
+            SdkLogger.Warning($"  Clone '{cloneId}': rebuilding {kind} for '{memberName}' threw: {ex.Message}");
+            return false;
+        }
+
         if (fresh == null)
         {
             if (error != null)
                 SdkLogger.Warning($"  Clone '{cloneId}': rebuilding {kind} for '{memberName}' failed: {error}");
-            return;
+            return false;
         }
 
         try { writer(fresh); }
         catch (Exception ex)
         {
             SdkLogger.Warning($"  Clone '{cloneId}': writing fresh {kind} back to '{memberName}' threw: {ex.Message}");
+            return false;
         }
+
+        return true;
     }
 
     // The clone reference may be base-typed; re-cast to the concrete wrapper so the
@@ -156,7 +181,8 @@ internal static class TemplateCloneDeepCopy
         return target;
     }
 
-    private static void DeepCopyOwnedReferences(Il2CppObjectBase clone, Type concreteType, string cloneId)
+    private static void DeepCopyOwnedReferences(
+        Il2CppObjectBase clone, Type concreteType, string cloneId, HashSet<string> reallocated)
     {
         var reflectionTarget = ReflectionTargetForConcreteType(clone, concreteType, cloneId);
         if (reflectionTarget == null) return;
@@ -177,7 +203,9 @@ internal static class TemplateCloneDeepCopy
             var elementType = Il2CppCollectionReflection.GetListElementType(prop.PropertyType);
             if (elementType == null || !IsOwnedElementType(elementType)) continue;
 
-            deepCopied += DeepCopyListElements(elementType, () => prop.GetValue(reflectionTarget), prop.Name, cloneId);
+            deepCopied += DeepCopyListElements(
+                elementType, () => prop.GetValue(reflectionTarget), prop.Name, cloneId,
+                containerCloneOwned: reallocated.Contains("P:" + prop.Name));
         }
 
         foreach (var field in type.GetFields(flags))
@@ -187,19 +215,34 @@ internal static class TemplateCloneDeepCopy
             var elementType = Il2CppCollectionReflection.GetListElementType(field.FieldType);
             if (elementType == null || !IsOwnedElementType(elementType)) continue;
 
-            deepCopied += DeepCopyListElements(elementType, () => field.GetValue(reflectionTarget), field.Name, cloneId);
+            deepCopied += DeepCopyListElements(
+                elementType, () => field.GetValue(reflectionTarget), field.Name, cloneId,
+                containerCloneOwned: reallocated.Contains("F:" + field.Name));
         }
 
         if (deepCopied > 0)
             SdkLogger.Msg($"    Clone '{cloneId}': deep-copied {deepCopied} owned element(s) so patches don't leak into the source");
     }
 
-    private static int DeepCopyListElements(Type elementType, Func<object> reader, string memberName, string cloneId)
+    private static int DeepCopyListElements(
+        Type elementType, Func<object> reader, string memberName, string cloneId, bool containerCloneOwned)
     {
         object listObject;
         try { listObject = reader(); }
         catch { return 0; }
         if (listObject == null) return 0;
+
+        // Invariant guard: only write element copies into a container pass 1 provably
+        // reseated. Writing into a container still shared with the source (getter-only
+        // property, init-only field, failed rebuild) would push the copies into the
+        // SOURCE template's live list — the corruption this class exists to prevent.
+        if (!containerCloneOwned)
+        {
+            SdkLogger.Warning(
+                $"  Clone '{cloneId}': '{memberName}' still shares its container with the source " +
+                "(not reseated in pass 1); skipping owned-element deep copy for it");
+            return 0;
+        }
 
         var listType = listObject.GetType();
         var countProp = listType.GetProperty("Count", BindingFlags.Instance | BindingFlags.Public);

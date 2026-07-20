@@ -116,6 +116,29 @@ internal static class Il2CppCollectionReflection
         error = null;
         if (source == null) { error = "source array is null."; return false; }
 
+        // Plain managed T[]: no (T[]) wrapper ctor and no Item indexer property — copy
+        // directly. (The IL2CPP wrapper path below can't handle it.)
+        if (arrayType.IsArray)
+        {
+            if (source is not Array sourceArray)
+            {
+                error = $"member type is {arrayType.FullName} but the value is {source.GetType().FullName}.";
+                return false;
+            }
+            try
+            {
+                var copy = Array.CreateInstance(elementType, sourceArray.Length);
+                Array.Copy(sourceArray, copy, sourceArray.Length);
+                fresh = copy;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                error = $"managed array copy threw: {ex.Message}.";
+                return false;
+            }
+        }
+
         var srcType = source.GetType();
         var lengthProp = srcType.GetProperty("Length", BindingFlags.Instance | BindingFlags.Public);
         var indexer = FindIntIndexer(srcType);

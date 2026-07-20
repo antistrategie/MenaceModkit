@@ -232,6 +232,11 @@ public static class EarlyTemplateInjection
     /// </summary>
     private static void BlackMarketFillUp_Prefix()
     {
+        // Last-chance repair: if the CreateNewGame-time injection was partial (some
+        // template types not loaded yet), retry before the market builds its pool.
+        if (!_hasInjectedThisSession)
+            InjectTemplatesNow("BlackMarket.FillUp");
+
         // No manual pool injection needed: clone registration mirrors every clone into
         // ancestor DataTemplateLoader slots, so the market's GetAll<BaseItemTemplate>()
         // enumeration sees them natively.
@@ -285,13 +290,5 @@ public static class EarlyTemplateInjection
         {
             _log.Error($"[{trigger}] Early injection failed: {ex.Message}");
         }
-    }
-
-    /// <summary>
-    /// Reset injection state. Call when returning to main menu or similar.
-    /// </summary>
-    public static void Reset()
-    {
-        _hasInjectedThisSession = false;
     }
 }
