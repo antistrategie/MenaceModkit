@@ -68,7 +68,7 @@ public sealed class ModInstallServiceTests : IDisposable
     }
 
     [Fact]
-    public void InstallFrom_CustomLeaderFrameworkBundle_HoistsDllAndMergesLeaderPacks()
+    public void InstallFrom_CustomLeaderFrameworkBundle_HoistsDllAndSkipsExamplePacks()
     {
         // The CustomLeader zip shape: framework DLL + customleaders/<pack>/ + tools/ + README.
         var src = Path.Combine(_gameDir, "incoming", "CustomLeader");
@@ -82,7 +82,9 @@ public sealed class ModInstallServiceTests : IDisposable
         new ModInstallService(_config).InstallFrom(src, "CustomLeader");
 
         Assert.True(File.Exists(Path.Combine(_modsDir, "MenaceCustomLeader.dll")));
-        Assert.True(File.Exists(Path.Combine(_modsDir, "customleaders", "menace", "menace_clone.json")));
+        // Example content bundled with a framework DLL is NOT installed — users add
+        // the leader packs they actually want separately.
+        Assert.False(Directory.Exists(Path.Combine(_modsDir, "customleaders", "menace")));
         Assert.False(Directory.Exists(Path.Combine(_modsDir, "CustomLeader"))); // no leftover folder
     }
 

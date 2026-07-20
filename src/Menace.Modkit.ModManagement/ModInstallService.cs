@@ -123,12 +123,15 @@ public sealed class ModInstallService
         }
 
         string target = string.Empty;
+        var dlls = Directory.GetFiles(modRootDir, "*.dll");
 
-        // Bundled leader packs (the CustomLeader framework zip ships customleaders/<x>/
-        // beside its DLL): merge each pack into the shared Mods/customleaders/ root.
+        // Bundled leader packs merge into the shared Mods/customleaders/ root — but only
+        // from content bundles. When a framework DLL ships alongside (the CustomLeader
+        // zip itself), the bundled pack is example content (John Menace); don't force it
+        // on the user — packs they actually want install separately.
         var bundledLeaders = Path.Combine(modRootDir, "customleaders");
         var hasBundledLeaders = Directory.Exists(bundledLeaders);
-        if (hasBundledLeaders)
+        if (hasBundledLeaders && dlls.Length == 0)
         {
             foreach (var pack in Directory.GetDirectories(bundledLeaders))
                 target = PlaceNamed(pack, Path.Combine(modsPath, "customleaders"), Path.GetFileName(pack));
@@ -137,7 +140,6 @@ public sealed class ModInstallService
         // Raw MelonMods load ONLY as top-level Mods/*.dll — MelonLoader does not scan
         // subfolders — so hoist their DLLs to the root instead of burying them in a
         // folder nothing reads.
-        var dlls = Directory.GetFiles(modRootDir, "*.dll");
         foreach (var dll in dlls)
             target = InstallDll(dll, modsPath);
 
