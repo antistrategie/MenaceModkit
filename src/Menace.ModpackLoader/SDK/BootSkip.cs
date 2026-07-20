@@ -246,6 +246,16 @@ public static class BootSkip
         {
             // Get current build index
             var activeScene = SceneManager.GetActiveScene();
+
+            // This skip was scheduled for a specific scene. If another path (e.g. the
+            // video-skip prefix) has already moved us on, doing buildIndex + 1 from the
+            // new scene would overshoot — past the main menu, straight into the campaign.
+            if (!string.Equals(activeScene.name, currentScene, StringComparison.OrdinalIgnoreCase))
+            {
+                SdkLogger.Msg($"[BootSkip] Skip for '{currentScene}' cancelled — scene is now '{activeScene.name}'");
+                return;
+            }
+
             var nextIndex = activeScene.buildIndex + 1;
 
             // Validate next scene exists

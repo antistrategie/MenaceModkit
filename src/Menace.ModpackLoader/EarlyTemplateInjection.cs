@@ -94,16 +94,10 @@ public static class EarlyTemplateInjection
 
     private static void ApplyPatches(HarmonyLib.Harmony harmony)
     {
-        var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
-
-        if (gameAssembly == null)
-        {
-            throw new Exception("Assembly-CSharp not found");
-        }
-
+        // Game types must be resolved via the IL2CPP-aware resolver; raw
+        // Assembly.GetType() cannot see interop proxy types for game classes.
         // Hook StrategyState.CreateNewGame - this is called when starting a new campaign
-        var strategyStateType = gameAssembly.GetType("Menace.States.StrategyState");
+        var strategyStateType = GameType.Find("Menace.States.StrategyState")?.ManagedType;
         if (strategyStateType == null)
         {
             throw new Exception("StrategyState type not found");
@@ -149,22 +143,24 @@ public static class EarlyTemplateInjection
         }
 
         // Hook BlackMarket.FillUp for blackmarket_refresh event
-        var blackMarketType = gameAssembly.GetType("Menace.Strategy.BlackMarket");
+        // (renamed to Restock(bool, bool) in the 2026-06-25 game update)
+        var blackMarketType = GameType.Find("Menace.Strategy.BlackMarket")?.ManagedType;
         if (blackMarketType != null)
         {
-            var fillUpMethod = blackMarketType.GetMethod("FillUp",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            var fillUpMethod = blackMarketType
+                .GetMethods(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                .FirstOrDefault(m => m.Name == "FillUp" || m.Name == "Restock");
 
             if (fillUpMethod != null)
             {
                 var bmPrefix = typeof(EarlyTemplateInjection).GetMethod(nameof(BlackMarketFillUp_Prefix),
                     BindingFlags.Static | BindingFlags.NonPublic);
                 harmony.Patch(fillUpMethod, prefix: new HarmonyMethod(bmPrefix));
-                _log.Msg("Patched BlackMarket.FillUp");
+                _log.Msg($"Patched BlackMarket.{fillUpMethod.Name}");
             }
             else
             {
-                _log.Warning("BlackMarket.FillUp method not found");
+                _log.Warning("BlackMarket.FillUp/Restock method not found");
             }
         }
         else
@@ -394,18 +390,11 @@ public static class EarlyTemplateInjection
         if (_baseItemTemplateType != null && _strategyStateType != null && _strategyConfigType != null)
             return;
 
-        var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
-            .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
-
-        if (gameAssembly == null)
-        {
-            _log.Warning("[BlackMarket] Assembly-CSharp not found");
-            return;
-        }
-
-        _baseItemTemplateType ??= gameAssembly.GetType("Menace.Items.BaseItemTemplate");
-        _strategyStateType ??= gameAssembly.GetType("Menace.States.StrategyState");
-        _strategyConfigType ??= gameAssembly.GetType("Menace.Strategy.StrategyConfig");
+        // Game types must come from the IL2CPP-aware resolver; raw Assembly.GetType()
+        // cannot see interop proxy types for game classes.
+        _baseItemTemplateType ??= GameType.Find("Menace.Items.BaseItemTemplate")?.ManagedType;
+        _strategyStateType ??= GameType.Find("Menace.States.StrategyState")?.ManagedType;
+        _strategyConfigType ??= GameType.Find("Menace.Strategy.StrategyConfig")?.ManagedType;
 
         if (_baseItemTemplateType == null)
             _log.Warning("[BlackMarket] BaseItemTemplate type not found");
