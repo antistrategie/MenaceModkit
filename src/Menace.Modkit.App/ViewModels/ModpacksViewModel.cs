@@ -16,6 +16,11 @@ public sealed class ModpacksViewModel : ViewModelBase
     private readonly ModpackManager _modpackManager;
     private readonly DeployManager _deployManager;
     private readonly ModUpdateChecker _modUpdateChecker;
+    // Same kind-aware installer/enabler the standalone manager uses, so a Jiangyu mod /
+    // raw MelonMod / leader pack added here installs into Mods/ under its section instead
+    // of being force-fitted into the modpack staging area.
+    private readonly Menace.Modkit.ModManagement.ModInstallService _installService = new();
+    private readonly Menace.Modkit.ModManagement.ModEnableService _enableService = new();
 
     public ModpacksViewModel()
     {
@@ -278,7 +283,7 @@ public sealed class ModpacksViewModel : ViewModelBase
                 };
 
                 var vm = new ModpackItemViewModel(mod.DisplayName, mod.Author, mod.VersionDisplay,
-                    kindLabel, null, fileName, true, _modpackManager, isExternal: true);
+                    kindLabel, null, fileName, true, _modpackManager, isExternal: true, source: mod);
                 if (mod.LoadOrder is { } order)
                     vm.LoadOrder = order; // synthetic manifest: no SaveMetadata side-effect
 
@@ -367,87 +372,37 @@ public sealed class ModpacksViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// Import a modpack from a zip file.
-    /// Returns true if import was successful.
+    /// Add a mod from an archive or DLL. Returns true on success.
     /// </summary>
     public bool ImportModpackFromZip(string zipPath)
     {
-        try
-        {
-            var manifest = _modpackManager.ImportModpackFromZip(zipPath);
-            if (manifest != null)
-            {
-                RefreshModpacks();
-                // Select the newly added modpack
-                SelectedModpack = AllModpacks.FirstOrDefault(m => m.Name == manifest.Name);
-                DeployStatus = $"Added: {manifest.Name}";
-                return true;
-            }
-        }
-        catch (Exception ex)
-        {
-            DeployStatus = $"Failed to add mod: {ex.Message}";
-            Services.ModkitLog.Error($"[ModpacksViewModel] Failed to add mod: {ex}");
-        }
-        return false;
+        var (ok, message) = AddModFromPath(zipPath);
+        DeployStatus = message;
+        RefreshModpacks();
+        return ok;
     }
 
     /// <summary>
-    /// Import a standalone DLL mod by copying it to the game's Mods directory.
-    /// Returns true if import was successful.
+    /// Add a raw MelonLoader DLL mod. Returns true on success.
     /// </summary>
     public bool ImportDll(string dllPath)
     {
-        var modsPath = _modpackManager.ModsBasePath;
-        if (string.IsNullOrEmpty(modsPath))
-        {
-            DeployStatus = "Game install path not set";
-            return false;
-        }
-
-        try
-        {
-            var fileName = Path.GetFileName(dllPath);
-            var destPath = Path.Combine(modsPath, fileName);
-
-            Directory.CreateDirectory(modsPath);
-            File.Copy(dllPath, destPath, overwrite: true);
-
-            RefreshModpacks();
-            DeployStatus = $"Added: {fileName}";
-            return true;
-        }
-        catch (Exception ex)
-        {
-            DeployStatus = $"Failed to add DLL: {ex.Message}";
-            ModkitLog.Error($"[ModpacksViewModel] Failed to add DLL: {ex}");
-            return false;
-        }
+        var (ok, message) = AddModFromPath(dllPath);
+        DeployStatus = message;
+        RefreshModpacks();
+        return ok;
     }
 
     /// <summary>
-    /// Import multiple modpacks from zip files.
+    /// Add several mods (archives and/or DLLs) at once.
     /// </summary>
     public void ImportModpacksFromZips(IEnumerable<string> zipPaths)
     {
-        int imported = 0;
-        int failed = 0;
-
-        foreach (var zipPath in zipPaths)
+        int imported = 0, failed = 0;
+        foreach (var path in zipPaths)
         {
-            try
-            {
-                var manifest = _modpackManager.ImportModpackFromZip(zipPath);
-                if (manifest != null)
-                    imported++;
-                else
-                    failed++;
-            }
-            catch (Exception ex)
-            {
-                failed++;
-                Services.ModkitLog.Warn($"[ModpacksViewModel] Failed to import {zipPath}: {ex.Message}");
-            }
+            var (ok, _) = AddModFromPath(path);
+            if (ok) imported++; else failed++;
         }
 
         RefreshModpacks();
@@ -458,6 +413,51 @@ public sealed class ModpacksViewModel : ViewModelBase
             DeployStatus = $"Added {imported} mod(s), {failed} failed";
         else if (failed > 0)
             DeployStatus = $"Failed to add {failed} file(s)";
+    }
+
+    /// <summary>
+    /// Route an added mod the same way the standalone manager does: a source <em>modpack</em>
+    /// (has <c>modpack.json</c>) goes into the authoring staging area; anything else
+    /// (Jiangyu mod, raw MelonMod DLL, CustomLeader pack) installs straight into <c>Mods/</c>
+    /// via the kind-aware installer and shows up under its catalog section — not staging.
+    /// </summary>
+    private (bool ok, string message) AddModFromPath(string path)
+    {
+        if (string.IsNullOrEmpty(_modpackManager.ModsBasePath))
+            return (false, "Game install path not set — set it in Settings.");
+
+        try
+        {
+            // A raw DLL is a MelonLoader mod: install to Mods/ root.
+            if (path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+                return (true, $"Installed: {Path.GetFileName(_installService.Install(path))}");
+
+            if (!Menace.Modkit.ModManagement.ModInstallService.IsArchive(path))
+                return (false, $"Unsupported file: {Path.GetFileName(path)}");
+
+            using var extracted = Menace.Modkit.ModManagement.ModInstallService.ExtractArchiveToTemp(path);
+
+            // Source modpack → authoring staging (the Modkit's job is to edit these).
+            if (extracted.ModRoot != null && File.Exists(Path.Combine(extracted.ModRoot, "modpack.json")))
+            {
+                var manifest = _modpackManager.ImportModpackFromZip(path);
+                if (manifest == null)
+                    return (false, "Failed to import modpack");
+                SelectedModpack = AllModpacks.FirstOrDefault(m => m.Name == manifest.Name);
+                return (true, $"Added modpack to staging: {manifest.Name}");
+            }
+
+            // Foreign mod (Jiangyu / MelonMod / leader pack) → install into Mods/.
+            var installed = extracted.BareDll != null
+                ? _installService.Install(extracted.BareDll)
+                : _installService.InstallFrom(extracted.ModRoot!, extracted.Name);
+            return (true, $"Installed: {Path.GetFileName(installed)}");
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Error($"[ModpacksViewModel] Add mod failed for '{path}': {ex}");
+            return (false, $"Failed to add mod: {ex.Message}");
+        }
     }
 
     public void DeleteSelectedModpack()
@@ -523,9 +523,46 @@ public sealed class ModpacksViewModel : ViewModelBase
     private async Task ToggleDeployStandaloneAsync(ModpackItemViewModel mod)
     {
         var modsPath = _modpackManager.ModsBasePath;
-        if (string.IsNullOrEmpty(modsPath) || string.IsNullOrEmpty(mod.DllFileName))
+        if (string.IsNullOrEmpty(modsPath))
         {
-            DeployStatus = "Game install path not set";
+            DeployStatus = "Game install path not set — set it in Settings.";
+            return;
+        }
+
+        // A mod already installed in Mods/ (Jiangyu, folder modpack, leader pack, or a raw
+        // DLL) is toggled by enable/disable through the kind-aware service — it isn't a
+        // bundled single-DLL we copy in. This is the path WOMENACE hits; the old code only
+        // understood DllFileName and wrongly reported "Game install path not set".
+        if (mod.Source is { } installed)
+        {
+            IsDeploying = true;
+            try
+            {
+                if (!installed.CanToggle)
+                {
+                    DeployStatus = $"{installed.DisplayName} can't be toggled (protected).";
+                    return;
+                }
+                await Task.Run(() => _enableService.SetEnabled(installed, !installed.IsEnabled));
+                DeployStatus = installed.IsEnabled ? $"Disabled: {mod.Name}" : $"Enabled: {mod.Name}";
+                RefreshModpacks();
+                await Services.AppHealthStateService.Instance.InvalidateAndRefreshAsync();
+            }
+            catch (Exception ex)
+            {
+                DeployStatus = $"Failed: {ex.Message}";
+            }
+            finally
+            {
+                IsDeploying = false;
+            }
+            return;
+        }
+
+        // Bundled dev DLL not yet in Mods/: copy/remove the single DLL.
+        if (string.IsNullOrEmpty(mod.DllFileName))
+        {
+            DeployStatus = $"No deployable DLL for {mod.Name}.";
             return;
         }
 
@@ -808,7 +845,8 @@ public sealed class ModpackItemViewModel : ViewModelBase
     /// </summary>
     public ModpackItemViewModel(string name, string author, string version,
         string description, string? dllSourcePath, string dllFileName,
-        bool isDeployed, ModpackManager manager, bool isExternal = false)
+        bool isDeployed, ModpackManager manager, bool isExternal = false,
+        Menace.Modkit.ModManagement.ManagedMod? source = null)
     {
         _manifest = new ModpackManifest
         {
@@ -823,7 +861,16 @@ public sealed class ModpackItemViewModel : ViewModelBase
         DllSourcePath = dllSourcePath;
         DllFileName = dllFileName;
         _isDeployed = isDeployed;
+        Source = source;
     }
+
+    /// <summary>
+    /// The catalog entry this row was built from, for mods already installed in
+    /// <c>Mods/</c> (Jiangyu, folder modpacks, leader packs, raw DLLs). Null for staging
+    /// modpacks and bundled-but-not-yet-deployed dev DLLs. Lets installed mods be
+    /// toggled/removed through the kind-aware services instead of assuming a single DLL.
+    /// </summary>
+    public Menace.Modkit.ModManagement.ManagedMod? Source { get; }
 
     private bool _isStandalone;
     public bool IsStandalone

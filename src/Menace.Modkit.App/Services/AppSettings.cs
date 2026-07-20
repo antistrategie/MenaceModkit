@@ -211,6 +211,16 @@ public class AppSettings
             }
         }
 
+        // Last resort: the standalone manager's locator, which walks every Steam library
+        // via libraryfolders.vdf and validates with Menace.exe/Menace_Data. This is what
+        // found the game when the probes above missed it (e.g. a ~/.steam/steam symlink).
+        var located = Menace.Modkit.ModManagement.GameLocator.FindGame();
+        if (!string.IsNullOrEmpty(located))
+        {
+            ModkitLog.Info($"Detected game install (GameLocator): {located}");
+            return located;
+        }
+
         ModkitLog.Warn("Game install path not auto-detected. Set it manually in Settings.");
         return string.Empty;
     }
