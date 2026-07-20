@@ -170,6 +170,59 @@ public sealed class ModDeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Deploy_SplitOutLeaderPack_CarriesProvenanceMarker()
+    {
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Shrike"",""version"":""2.1.0""}");
+        var pack = Path.Combine(_sourceDir, "customleaders", "shrike");
+        Directory.CreateDirectory(pack);
+        File.WriteAllText(Path.Combine(pack, "shrike_clone.json"), "{}");
+
+        await new ModDeployService(_config).DeployAsync(_sourceDir, deployedBy: "modkit");
+
+        var provenance = ModDeployService.ReadLeaderPackMarker(
+            Path.Combine(_modsDir, "customleaders", "shrike"));
+        Assert.NotNull(provenance);
+        Assert.Equal("modkit", provenance!.DeployedBy);
+        Assert.Equal("Shrike", provenance.Owner);
+    }
+
+    [Fact]
+    public async Task Deploy_NeverOverwritesUserInstalledLeaderPack()
+    {
+        // A same-named pack the user installed themselves (no provenance marker) must
+        // survive a hybrid deploy untouched.
+        var userPack = Path.Combine(_modsDir, "customleaders", "shrike");
+        Directory.CreateDirectory(userPack);
+        File.WriteAllText(Path.Combine(userPack, "shrike_clone.json"), @"{""mine"":true}");
+
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Shrike"",""version"":""2.1.0""}");
+        var pack = Path.Combine(_sourceDir, "customleaders", "shrike");
+        Directory.CreateDirectory(pack);
+        File.WriteAllText(Path.Combine(pack, "shrike_clone.json"), @"{""bundled"":true}");
+
+        await new ModDeployService(_config).DeployAsync(_sourceDir, deployedBy: "modkit");
+
+        Assert.Contains("mine", File.ReadAllText(Path.Combine(userPack, "shrike_clone.json")));
+        Assert.Null(ModDeployService.ReadLeaderPackMarker(userPack));
+    }
+
+    [Fact]
+    public async Task Deploy_ReplacesItsOwnSplitOutLeaderPack()
+    {
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Shrike"",""version"":""2.1.0""}");
+        var pack = Path.Combine(_sourceDir, "customleaders", "shrike");
+        Directory.CreateDirectory(pack);
+        File.WriteAllText(Path.Combine(pack, "shrike_clone.json"), @"{""v"":1}");
+
+        await new ModDeployService(_config).DeployAsync(_sourceDir, deployedBy: "modkit");
+        File.WriteAllText(Path.Combine(pack, "shrike_clone.json"), @"{""v"":2}");
+        await new ModDeployService(_config).DeployAsync(_sourceDir, deployedBy: "modkit");
+
+        var deployed = Path.Combine(_modsDir, "customleaders", "shrike", "shrike_clone.json");
+        Assert.Contains(@"""v"":2", File.ReadAllText(deployed).Replace(" ", ""));
+    }
+
+    [Fact]
     public async Task Deploy_ReplacesExistingInstall()
     {
         WriteManifest(@"{""manifestVersion"":2,""name"":""Dup"",""version"":""1.0.0""}");

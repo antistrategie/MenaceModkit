@@ -15,7 +15,8 @@ namespace Menace.Modkit.ModManagement;
 /// </summary>
 internal static class RuntimeManifestWriter
 {
-    public static void Write(string sourceDir, string deployDir, string? deployedBy = null)
+    public static void Write(
+        string sourceDir, string deployDir, string? deployedBy = null, IProgress<string>? progress = null)
     {
         var manifest = LoadManifest(sourceDir);
 
@@ -52,7 +53,11 @@ internal static class RuntimeManifestWriter
                         legacyTemplates[templateType] = node;
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    // Deploying without the file would silently drop its patches at runtime.
+                    progress?.Report($"Warning: stats/{Path.GetFileName(statsFile)} is malformed and was skipped ({ex.Message})");
+                }
             }
         }
 
@@ -103,7 +108,10 @@ internal static class RuntimeManifestWriter
                     if (node != null)
                         clones[templateType] = node;
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    progress?.Report($"Warning: clones/{Path.GetFileName(file)} is malformed and was skipped ({ex.Message})");
+                }
             }
         }
 

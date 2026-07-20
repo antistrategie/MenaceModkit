@@ -24,13 +24,24 @@ public sealed class JiangyuLoaderInstaller
     private readonly IModkitConfig _config;
     private readonly HttpClient _http;
 
+    // One long-lived client for all instances (HttpClient is designed to be shared, and
+    // per-instance clients were never disposed); a handler-injected instance (tests)
+    // still gets its own.
+    private static readonly HttpClient SharedHttp = CreateClient(null);
+
     public JiangyuLoaderInstaller(IModkitConfig? config = null, HttpMessageHandler? handler = null)
     {
         _config = config ?? ModkitConfig.Current;
-        _http = handler is null ? new HttpClient() : new HttpClient(handler);
+        _http = handler is null ? SharedHttp : CreateClient(handler);
+    }
+
+    private static HttpClient CreateClient(HttpMessageHandler? handler)
+    {
+        var http = handler is null ? new HttpClient() : new HttpClient(handler);
         // GitHub requires a User-Agent.
-        _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("MenaceModManager", "1.0"));
-        _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("MenaceModManager", "1.0"));
+        http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        return http;
     }
 
     public string? ModsPath =>

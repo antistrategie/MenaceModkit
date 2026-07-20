@@ -33,12 +33,23 @@ public sealed class MelonLoaderInstaller
     private readonly IModkitConfig _config;
     private readonly HttpClient _http;
 
+    // One long-lived client for all instances (HttpClient is designed to be shared, and
+    // per-instance clients were never disposed); a handler-injected instance (tests)
+    // still gets its own.
+    private static readonly HttpClient SharedHttp = CreateClient(null);
+
     public MelonLoaderInstaller(IModkitConfig? config = null, HttpMessageHandler? handler = null)
     {
         _config = config ?? ModkitConfig.Current;
-        _http = handler is null ? new HttpClient() : new HttpClient(handler);
-        _http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("MenaceModManager", "1.0"));
-        _http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        _http = handler is null ? SharedHttp : CreateClient(handler);
+    }
+
+    private static HttpClient CreateClient(HttpMessageHandler? handler)
+    {
+        var http = handler is null ? new HttpClient() : new HttpClient(handler);
+        http.DefaultRequestHeaders.UserAgent.Add(new ProductInfoHeaderValue("MenaceModManager", "1.0"));
+        http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
+        return http;
     }
 
     public string? GameInstallPath => string.IsNullOrEmpty(_config.GameInstallPath) ? null : _config.GameInstallPath;
@@ -112,24 +123,52 @@ public sealed class MelonLoaderInstaller
         return null;
     }
 
-    /// <summary>Extract every entry into <paramref name="destDir"/>, preserving structure, overwriting.</summary>
+    /// <summary>
+    /// Extract every entry into <paramref name="destDir"/>, preserving structure,
+    /// overwriting. The archive is fully extracted to a temp dir first so a corrupt
+    /// download fails before any game file is touched — extracting straight over the
+    /// game dir would leave a broken mixed-version MelonLoader behind.
+    /// </summary>
     private static void ExtractInto(string zipPath, string destDir)
     {
-        Directory.CreateDirectory(destDir);
-
-        using var archive = ArchiveFactory.Open(zipPath);
-        foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
+        var staging = Path.Combine(Path.GetTempPath(), "ml-extract-" + Guid.NewGuid().ToString("N"));
+        try
         {
-            if (string.IsNullOrEmpty(entry.Key))
-                continue;
+            using (var archive = ArchiveFactory.Open(zipPath))
+            {
+                foreach (var entry in archive.Entries.Where(e => !e.IsDirectory))
+                {
+                    if (string.IsNullOrEmpty(entry.Key))
+                        continue;
 
-            var destPath = PathValidator.ValidateArchiveEntryPath(destDir, entry.Key);
-            var dir = Path.GetDirectoryName(destPath);
-            if (!string.IsNullOrEmpty(dir))
-                Directory.CreateDirectory(dir);
+                    var destPath = PathValidator.ValidateArchiveEntryPath(staging, entry.Key);
+                    var dir = Path.GetDirectoryName(destPath);
+                    if (!string.IsNullOrEmpty(dir))
+                        Directory.CreateDirectory(dir);
 
-            entry.WriteToFile(destPath, new ExtractionOptions { ExtractFullPath = false, Overwrite = true });
+                    entry.WriteToFile(destPath, new ExtractionOptions { ExtractFullPath = false, Overwrite = true });
+                }
+            }
+
+            Directory.CreateDirectory(destDir);
+            CopyTreeOver(staging, destDir);
         }
+        finally
+        {
+            try { if (Directory.Exists(staging)) Directory.Delete(staging, recursive: true); }
+            catch { /* best effort */ }
+        }
+    }
+
+    private static void CopyTreeOver(string source, string dest)
+    {
+        Directory.CreateDirectory(dest);
+
+        foreach (var file in Directory.GetFiles(source))
+            File.Copy(file, Path.Combine(dest, Path.GetFileName(file)), overwrite: true);
+
+        foreach (var dir in Directory.GetDirectories(source))
+            CopyTreeOver(dir, Path.Combine(dest, Path.GetFileName(dir)));
     }
 
     private async Task<JsonDocument> GetJsonAsync(string url, CancellationToken ct)

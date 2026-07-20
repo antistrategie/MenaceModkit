@@ -69,10 +69,14 @@ public sealed class ModInstallService
 
     // ---- install kinds ----
 
-    private static string InstallFolder(string sourceDir, string modsPath)
+    // Both funnel through InstallFrom so every entry point gets the same smart routing
+    // (leader-pack merging, DLL hoisting, …). In particular, PlaceNamed on an archive
+    // whose root is a customleaders/ folder would ClearTarget the shared
+    // Mods/customleaders/ — deleting every previously installed leader pack.
+    private string InstallFolder(string sourceDir, string modsPath)
     {
         var name = Path.GetFileName(sourceDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        return PlaceNamed(sourceDir, modsPath, name);
+        return InstallFrom(sourceDir, name);
     }
 
     private static string InstallDll(string dllPath, string modsPath)
@@ -82,12 +86,12 @@ public sealed class ModInstallService
         return target;
     }
 
-    private static string InstallArchive(string archivePath, string modsPath)
+    private string InstallArchive(string archivePath, string modsPath)
     {
         using var extracted = ExtractArchiveToTemp(archivePath);
         if (extracted.BareDll != null)
             return InstallDll(extracted.BareDll, modsPath);
-        return PlaceNamed(extracted.ModRoot!, modsPath, extracted.Name);
+        return InstallFrom(extracted.ModRoot!, extracted.Name);
     }
 
     /// <summary>
@@ -139,9 +143,23 @@ public sealed class ModInstallService
 
         // Raw MelonMods load ONLY as top-level Mods/*.dll — MelonLoader does not scan
         // subfolders — so hoist their DLLs to the root instead of burying them in a
-        // folder nothing reads.
-        foreach (var dll in dlls)
-            target = InstallDll(dll, modsPath);
+        // folder nothing reads. Dependency DLLs shipped alongside (managed assemblies
+        // with no melon markers) go to UserLibs/, MelonLoader's resolve directory —
+        // hoisting them too would list each dep as a separate mod in the catalog.
+        // Opaque binaries (native/unreadable) are hoisted conservatively.
+        var (modDlls, supportDlls) = ClassifyDlls(dlls);
+        if (modDlls.Count > 0)
+        {
+            foreach (var dll in modDlls)
+                target = InstallDll(dll, modsPath);
+
+            var userLibs = Path.Combine(Path.GetDirectoryName(modsPath)!, "UserLibs");
+            foreach (var dll in supportDlls)
+            {
+                Directory.CreateDirectory(userLibs);
+                File.Copy(dll, Path.Combine(userLibs, Path.GetFileName(dll)), overwrite: true);
+            }
+        }
 
         // Nothing recognised: install as a plain folder (the catalog will surface it).
         if (target.Length == 0)
@@ -164,6 +182,26 @@ public sealed class ModInstallService
     }
 
     private static readonly string[] DocExtensions = { ".txt", ".md", ".pdf", ".rtf", ".nfo" };
+
+    /// <summary>
+    /// Split root DLLs into loadable mods (hoisted to <c>Mods/</c>) and support libraries
+    /// (managed assemblies with no melon markers → <c>UserLibs/</c>). Anything unreadable
+    /// (native/corrupt) counts as a mod — the conservative choice keeps it visible.
+    /// </summary>
+    private static (List<string> ModDlls, List<string> SupportDlls) ClassifyDlls(string[] dlls)
+    {
+        var modDlls = new List<string>();
+        var supportDlls = new List<string>();
+        foreach (var dll in dlls)
+        {
+            var info = MelonModInspector.Inspect(dll);
+            if (info == null || info.HasMelonInfo || info.ReferencesMelonLoader || info.IsJiangyu)
+                modDlls.Add(dll);
+            else
+                supportDlls.Add(dll);
+        }
+        return (modDlls, supportDlls);
+    }
 
     private static bool IsLeaderPack(string dir) =>
         Directory.EnumerateFiles(dir, "*_clone.json").Any() ||
@@ -260,19 +298,35 @@ public sealed class ModInstallService
     }
 
     /// <summary>Copy a mod folder into <c>Mods/&lt;name&gt;</c> (clean replace, junk stripped, guarded).</summary>
-    private static string PlaceNamed(string sourceDir, string modsPath, string name)
+    private string PlaceNamed(string sourceDir, string modsPath, string name)
     {
         var target = Path.Combine(modsPath, name);
 
         // Copying a folder that IS (or contains) the target would delete the source.
+        // Ignore-case: Windows/macOS resolve differently-cased paths to the same folder,
+        // and a false negative here deletes the user's source. (On Linux this only makes
+        // the guard stricter.)
         var src = Path.GetFullPath(sourceDir).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var tgt = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        if (src.StartsWith(tgt, StringComparison.Ordinal) || tgt.StartsWith(src, StringComparison.Ordinal))
+        if (src.StartsWith(tgt, StringComparison.OrdinalIgnoreCase) || tgt.StartsWith(src, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("Install the mod from a location outside the game's Mods/ directory.");
 
-        ClearTarget(target);
-        // Copy (not move) so it works across volumes and leaves any temp dir for cleanup.
-        CopyDirectory(sourceDir, target, isRoot: true);
+        // Stage the full copy first, then swap it in: deleting the old install before a
+        // copy that can fail midway (locked file, disk full) would leave neither the old
+        // nor a complete new install. The staging dir lives inside the game folder so the
+        // final move is a same-volume rename, and outside Mods/ so loaders never see it.
+        var staging = StagingArea.Create(_config);
+        try
+        {
+            CopyDirectory(sourceDir, staging, isRoot: true);
+            ClearTarget(target);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            Directory.Move(staging, target);
+        }
+        finally
+        {
+            StagingArea.Discard(staging);
+        }
         return target;
     }
 

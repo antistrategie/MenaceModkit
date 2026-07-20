@@ -52,10 +52,12 @@ public sealed class ModEnableService
         if (enabled)
         {
             Directory.CreateDirectory(modsPath);
-            // A ".dll.disabled" parked in Mods/ is re-enabled by stripping the suffix in place.
-            target = name.EndsWith(".dll.disabled", StringComparison.OrdinalIgnoreCase) && IsUnder(source, modsPath)
-                ? Path.Combine(modsPath, name[..^".disabled".Length])
-                : Path.Combine(modsPath, rel);
+            // A ".dll.disabled" mod re-enables by stripping the suffix, wherever it lives
+            // — moving one from DisabledMods/ back with the suffix intact would land it
+            // in Mods/ still disabled.
+            if (rel.EndsWith(".dll.disabled", StringComparison.OrdinalIgnoreCase))
+                rel = rel[..^".disabled".Length];
+            target = Path.Combine(modsPath, rel);
         }
         else
         {

@@ -97,6 +97,32 @@ namespace M { public class E { } }";
     }
 
     [Fact]
+    public void Enable_SuffixedDllParkedInDisabledMods_StripsSuffix()
+    {
+        // A ".dll.disabled" file that ended up in DisabledMods/ must come back as a
+        // plain ".dll" — moving it with the suffix intact would leave it in Mods/
+        // still disabled after the user clicked Enable.
+        var disabledDir = Path.Combine(_gameDir, "DisabledMods");
+        Directory.CreateDirectory(disabledDir);
+        var parked = Path.Combine(disabledDir, "Weird.dll.disabled");
+        File.WriteAllText(parked, "x");
+
+        var mod = new ManagedMod
+        {
+            Kind = ModKind.MelonMod,
+            Id = "Weird.dll.disabled",
+            DisplayName = "Weird",
+            IsEnabled = false,
+            Location = parked,
+        };
+
+        new ModEnableService(_config).Enable(mod);
+
+        Assert.True(File.Exists(Path.Combine(_modsDir, "Weird.dll")));
+        Assert.False(File.Exists(parked));
+    }
+
+    [Fact]
     public void SetEnabled_ProtectedMod_Throws()
     {
         FixtureAssembly.Emit(_modsDir, "Menace.ModpackLoader", "namespace X { public class Y { } }");

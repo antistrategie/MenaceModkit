@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -35,7 +36,9 @@ public class ModUpdateChecker : IDisposable
 {
     private readonly HttpClient _httpClient;
     private readonly TimeSpan _cacheDuration = TimeSpan.FromHours(12);
-    private readonly Dictionary<string, (ModUpdateInfo info, DateTime checkedAt)> _cache = new();
+    // Concurrent: CheckAllForUpdatesAsync fans the checks out with Task.WhenAll, so
+    // writes race each other (and a plain Dictionary corrupts under concurrent writes).
+    private readonly ConcurrentDictionary<string, (ModUpdateInfo info, DateTime checkedAt)> _cache = new();
     private static readonly string CacheFilePath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "MenaceModkit", "update_cache.json");

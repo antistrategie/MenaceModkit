@@ -157,8 +157,10 @@ public class CompilationService
         Directory.CreateDirectory(buildDir);
         var outputPath = Path.Combine(buildDir, $"{assemblyName}.dll");
 
-        // Emit
-        using var stream = new FileStream(outputPath, FileMode.Create);
+        // Emit to memory first: writing the file before Emit would leave a truncated DLL
+        // in build/ on failure, which a later deploy's has-built-output check happily
+        // ships into Mods/ as if it were a working build.
+        using var stream = new MemoryStream();
         var emitResult = compilation.Emit(stream);
 
         // Convert diagnostics
@@ -186,7 +188,14 @@ public class CompilationService
         result.Success = emitResult.Success;
         if (emitResult.Success)
         {
+            File.WriteAllBytes(outputPath, stream.ToArray());
             result.OutputDllPath = outputPath;
+        }
+        else
+        {
+            // A stale DLL from an earlier successful build must not survive a failed
+            // rebuild either — it would be deployed as if it were current.
+            try { File.Delete(outputPath); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         }
 
         return result;

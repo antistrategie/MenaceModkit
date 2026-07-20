@@ -39,6 +39,33 @@ public sealed class ModInstallServiceTests : IDisposable
     }
 
     [Fact]
+    public void InstallFrom_ModWithDependencyDll_SendsDependencyToUserLibs()
+    {
+        // A raw MelonMod shipped with a plain library beside it: the melon hoists to
+        // Mods/ root, the dependency goes to UserLibs/ (MelonLoader's resolve dir) —
+        // hoisting it too would list the dep as a separate mod in the catalog.
+        var src = Path.Combine(_gameDir, "incoming", "NetMod");
+        Directory.CreateDirectory(src);
+        FixtureAssembly.Emit(src, "NetMod", @"
+using System;
+[assembly: MelonLoader.MelonInfoAttribute(typeof(M.E), ""NetMod"", ""1.0"", ""x"")]
+namespace MelonLoader {
+    [AttributeUsage(AttributeTargets.Assembly)]
+    public sealed class MelonInfoAttribute : Attribute {
+        public MelonInfoAttribute(Type type, string name, string version, string author) { }
+    }
+}
+namespace M { public class E { } }");
+        FixtureAssembly.Emit(src, "LiteNetLib", "namespace L { public class N { } }");
+
+        new ModInstallService(_config).InstallFrom(src, "NetMod");
+
+        Assert.True(File.Exists(Path.Combine(_modsDir, "NetMod.dll")));
+        Assert.False(File.Exists(Path.Combine(_modsDir, "LiteNetLib.dll")));
+        Assert.True(File.Exists(Path.Combine(_gameDir, "UserLibs", "LiteNetLib.dll")));
+    }
+
+    [Fact]
     public void InstallFrom_MelonFolderWithAssets_HoistsDllAndKeepsAssetFolder()
     {
         var src = Path.Combine(_gameDir, "incoming", "AssetMod");
@@ -202,10 +229,36 @@ public sealed class ModInstallServiceTests : IDisposable
 
         var installed = new ModInstallService(_config).Install(zipPath);
 
-        Assert.Equal(Path.Combine(_modsDir, "Mount Up"), installed);
-        Assert.True(File.Exists(Path.Combine(installed, "MountUp.dll")));
-        // The project tree (and its duplicate build-output DLLs) must not be deployed.
-        Assert.False(Directory.Exists(Path.Combine(installed, "src")));
+        // Archives route through InstallFrom, so the DLL is hoisted to the Mods/ root
+        // (MelonLoader only loads top-level Mods/*.dll — a "Mount Up/" folder would
+        // never be read) and the project tree is not deployed at all.
+        Assert.Equal(Path.Combine(_modsDir, "MountUp.dll"), installed);
+        Assert.True(File.Exists(installed));
+        Assert.False(Directory.Exists(Path.Combine(_modsDir, "Mount Up")));
+    }
+
+    [Fact]
+    public void Install_ZipWithCustomleadersRoot_MergesInsteadOfWiping()
+    {
+        // Pre-existing leader pack installed by the user.
+        var existing = Path.Combine(_modsDir, "customleaders", "Darby");
+        Directory.CreateDirectory(existing);
+        File.WriteAllText(Path.Combine(existing, "darby_clone.json"), "{}");
+
+        // A zip whose root is a customleaders/ folder (the common multi-leader shape).
+        var stage = Path.Combine(_gameDir, "stage-leaders", "customleaders", "Nikke");
+        Directory.CreateDirectory(stage);
+        File.WriteAllText(Path.Combine(stage, "nikke_clone.json"), "{}");
+
+        var zipPath = Path.Combine(_gameDir, "Leaders.zip");
+        ZipFile.CreateFromDirectory(Path.Combine(_gameDir, "stage-leaders"), zipPath);
+
+        new ModInstallService(_config).Install(zipPath);
+
+        // The new pack merged in — and the pre-existing pack survived. (Routing this
+        // shape through PlaceNamed would have replaced the whole customleaders/ root.)
+        Assert.True(File.Exists(Path.Combine(_modsDir, "customleaders", "Nikke", "nikke_clone.json")));
+        Assert.True(File.Exists(Path.Combine(existing, "darby_clone.json")));
     }
 
     [Fact]

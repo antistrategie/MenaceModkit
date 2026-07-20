@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Menace.Modkit.App.Models;   // ModpackManifest, CompilationResult (kept App namespace when extracted)
@@ -77,24 +78,34 @@ public sealed class ModDeployService
             throw new InvalidOperationException(
                 "Deploy the source modpack from a folder outside the game's Mods/ directory.");
 
-        if (Directory.Exists(target))
-            Directory.Delete(target, recursive: true);
-        Directory.CreateDirectory(target);
-
-        // 3. Copy the mod tree, minus source/build artefacts.
+        // 3-5. Build the complete deployed tree in a same-volume staging dir, then swap it
+        //      in — deleting the old install before a copy that can fail midway would
+        //      leave neither the old nor a complete new install.
         progress?.Report($"Deploying {name}…");
-        CopyTree(sourceDir, target, isRoot: true);
+        var staging = StagingArea.Create(_config);
+        try
+        {
+            // Copy the mod tree minus source/build artefacts, assemble dlls/ from the
+            // compiled build output + prebuilt DLLs, and write the runtime modpack.json
+            // (stats/*.json + clones/*.json merged in).
+            CopyTree(sourceDir, staging, isRoot: true);
+            AssembleDlls(sourceDir, manifest, staging);
+            RuntimeManifestWriter.Write(sourceDir, staging, deployedBy, progress);
 
-        // 4. Assemble dlls/ from the compiled build output + any prebuilt DLLs.
-        AssembleDlls(sourceDir, manifest, target);
-
-        // 5. Write the runtime modpack.json (stats/*.json + clones/*.json merged in).
-        RuntimeManifestWriter.Write(sourceDir, target, deployedBy);
+            if (Directory.Exists(target))
+                Directory.Delete(target, recursive: true);
+            Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+            Directory.Move(staging, target);
+        }
+        finally
+        {
+            StagingArea.Discard(staging);
+        }
 
         // 6. Hybrid mods (e.g. SkyBot-style leaders) bundle CustomLeader packs beside their
         //    modpack content. The MenaceCustomLeader framework only reads the fixed
         //    Mods/customleaders/ root, so split those packs out of the modpack folder.
-        SplitOutLeaderPacks(sourceDir, target, modsPath);
+        SplitOutLeaderPacks(sourceDir, target, modsPath, deployedBy, name, progress);
 
         progress?.Report($"Deployed {name}");
         return target;
@@ -116,25 +127,81 @@ public sealed class ModDeployService
     /// <summary>
     /// Move any bundled CustomLeader packs (<c>customleaders/&lt;name&gt;/</c> in the source)
     /// into the shared <c>Mods/customleaders/</c> root and drop them from the deployed
-    /// modpack folder — the framework never looks inside modpacks.
+    /// modpack folder — the framework never looks inside modpacks. Each split-out pack is
+    /// stamped with a provenance marker (deployer + owning modpack) so retire/undeploy can
+    /// remove exactly these packs; a same-named pack the user installed themselves (no
+    /// marker) is never overwritten.
     /// </summary>
-    private static void SplitOutLeaderPacks(string sourceDir, string target, string modsPath)
+    private static void SplitOutLeaderPacks(
+        string sourceDir, string target, string modsPath,
+        string? deployedBy, string owner, IProgress<string>? progress)
     {
         var bundled = Path.Combine(sourceDir, "customleaders");
-        if (!Directory.Exists(bundled))
-            return;
-
-        foreach (var pack in Directory.GetDirectories(bundled))
+        if (Directory.Exists(bundled))
         {
-            var packTarget = Path.Combine(modsPath, "customleaders", Path.GetFileName(pack));
-            if (Directory.Exists(packTarget))
-                Directory.Delete(packTarget, recursive: true);
-            CopyTree(pack, packTarget, isRoot: true);
+            foreach (var pack in Directory.GetDirectories(bundled))
+            {
+                var packName = Path.GetFileName(pack);
+                var packTarget = Path.Combine(modsPath, "customleaders", packName);
+                if (Directory.Exists(packTarget) && ReadLeaderPackMarker(packTarget) == null)
+                {
+                    progress?.Report(
+                        $"Leader pack '{packName}' was installed separately — leaving it untouched.");
+                    continue;
+                }
+
+                if (Directory.Exists(packTarget))
+                    Directory.Delete(packTarget, recursive: true);
+                CopyTree(pack, packTarget, isRoot: true);
+                WriteLeaderPackMarker(packTarget, deployedBy, owner);
+            }
         }
 
         var nested = Path.Combine(target, "customleaders");
         if (Directory.Exists(nested))
             Directory.Delete(nested, recursive: true);
+    }
+
+    // ---- split-out leader pack provenance ----
+
+    private const string LeaderPackMarkerFile = ".deployedBy.json";
+
+    /// <summary>Provenance of a split-out leader pack (see <see cref="ReadLeaderPackMarker"/>).</summary>
+    public sealed record LeaderPackProvenance(string? DeployedBy, string? Owner);
+
+    /// <summary>
+    /// Read the provenance marker of a <c>Mods/customleaders/&lt;pack&gt;</c> directory.
+    /// Null means the pack has no marker — installed by the user or another tool — and
+    /// must never be overwritten or cleaned up by a deployer.
+    /// </summary>
+    public static LeaderPackProvenance? ReadLeaderPackMarker(string packDir)
+    {
+        try
+        {
+            var path = Path.Combine(packDir, LeaderPackMarkerFile);
+            if (!File.Exists(path))
+                return null;
+
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            string? Get(string name) =>
+                doc.RootElement.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String
+                    ? v.GetString() : null;
+            return new LeaderPackProvenance(Get("deployedBy"), Get("owner"));
+        }
+        catch
+        {
+            // Unreadable marker → treat as not ours; never risk deleting a user's pack.
+            return null;
+        }
+    }
+
+    private static void WriteLeaderPackMarker(string packDir, string? deployedBy, string owner)
+    {
+        File.WriteAllText(
+            Path.Combine(packDir, LeaderPackMarkerFile),
+            JsonSerializer.Serialize(
+                new { deployedBy, owner },
+                new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private static void CopyTree(string source, string dest, bool isRoot)
@@ -202,11 +269,15 @@ public sealed class ModDeployService
         return string.IsNullOrWhiteSpace(name) ? null : name;
     }
 
-    /// <summary>True if the two paths are the same, or one contains the other.</summary>
+    /// <summary>
+    /// True if the two paths are the same, or one contains the other. Ignore-case:
+    /// Windows/macOS resolve differently-cased paths to the same folder, and a false
+    /// negative here lets the deploy delete its own source.
+    /// </summary>
     private static bool PathsOverlap(string a, string b)
     {
         var fa = Path.GetFullPath(a).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
         var fb = Path.GetFullPath(b).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        return fa.StartsWith(fb, StringComparison.Ordinal) || fb.StartsWith(fa, StringComparison.Ordinal);
+        return fa.StartsWith(fb, StringComparison.OrdinalIgnoreCase) || fb.StartsWith(fa, StringComparison.OrdinalIgnoreCase);
     }
 }
