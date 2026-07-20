@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Avalonia.Threading;
 using Menace.Modkit.App.Services; // ModLoaderInstaller (kept its original namespace when extracted)
 using Menace.Modkit.ModManagement;
+using Menace.ModManager;
 using ReactiveUI;
 
 namespace Menace.ModManager.ViewModels;
@@ -232,7 +233,7 @@ public sealed class MainViewModel : ReactiveObject
         var gamePath = ModkitConfig.Current.GameInstallPath;
         if (string.IsNullOrEmpty(gamePath))
         {
-            ErrorMessage = "Game not located — set MENACE_GAME_PATH.";
+            ErrorMessage = "Game not located — click Locate game… (or set MENACE_GAME_PATH).";
             return Task.CompletedTask;
         }
 
@@ -243,6 +244,23 @@ public sealed class MainViewModel : ReactiveObject
             if (!ok)
                 throw new InvalidOperationException("Modpack Loader install failed (see modkit.log).");
         });
+    }
+
+    /// <summary>Apply a user-chosen game folder (validated + persisted), then rescan.</summary>
+    public void SetGamePath(string path)
+    {
+        try
+        {
+            if (ModkitConfig.Current is StandaloneModkitConfig config)
+                config.SetGamePath(path);
+            ErrorMessage = null;
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = ex.Message;
+        }
+
+        Refresh();
     }
 
     public void Refresh()
@@ -273,7 +291,7 @@ public sealed class MainViewModel : ReactiveObject
 
             var path = _catalog.ModsPath;
             Status = path == null
-                ? "Game not located — set MENACE_GAME_PATH."
+                ? "Game not located — click Locate game… (or set MENACE_GAME_PATH)."
                 : $"{Mods.Count} mod(s) — {path}";
 
             RefreshLoaderStatuses();

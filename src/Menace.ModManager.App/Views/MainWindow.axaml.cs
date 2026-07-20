@@ -128,6 +128,19 @@ public partial class MainWindow : Window
 
     private void OnRefreshClick(object? sender, RoutedEventArgs e) => Vm?.Refresh();
 
+    private async void OnLocateGameClick(object? sender, RoutedEventArgs e)
+    {
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        {
+            Title = "Select the MENACE install folder (contains Menace.exe)",
+            AllowMultiple = false,
+        });
+
+        var path = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+        if (!string.IsNullOrEmpty(path))
+            Vm?.SetGamePath(path);
+    }
+
     private void OnDismissErrorClick(object? sender, RoutedEventArgs e) => Vm?.DismissError();
 
     private void OnToggleClick(object? sender, RoutedEventArgs e)
