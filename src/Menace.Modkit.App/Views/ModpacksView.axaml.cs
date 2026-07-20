@@ -128,12 +128,18 @@ public class ModpacksView : UserControl
       BorderThickness = new Thickness(0),
     };
     modpackList.Bind(ListBox.ItemsSourceProperty,
-      new Avalonia.Data.Binding("AllModpacks"));
+      new Avalonia.Data.Binding("ListRows"));
     modpackList.Bind(ListBox.SelectedItemProperty,
-      new Avalonia.Data.Binding("SelectedModpack"));
+      new Avalonia.Data.Binding("SelectedListRow"));
 
-    modpackList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<ModpackItemViewModel>(
-      (modpack, _) => CreateModpackListItem(modpack));
+    // Rows are either a section header or a modpack item.
+    modpackList.ItemTemplate = new Avalonia.Controls.Templates.FuncDataTemplate<object>(
+      (row, _) => row switch
+      {
+        ModpackItemViewModel modpack => CreateModpackListItem(modpack),
+        ModListSection section => CreateSectionHeader(section),
+        _ => new TextBlock(),
+      });
 
     // Drag-and-drop: allow items to be dropped onto the list (reordering + archive/DLL import)
     DragDrop.SetAllowDrop(modpackList, true);
@@ -199,6 +205,19 @@ public class ModpacksView : UserControl
     Grid.SetRow(modpackList, 2);
 
     return grid;
+  }
+
+  private static Control CreateSectionHeader(ModListSection section)
+  {
+    return new TextBlock
+    {
+      Text = $"{section.Title}  ({section.Count})",
+      FontSize = 11,
+      FontWeight = FontWeight.Bold,
+      Opacity = 0.55,
+      Margin = new Thickness(8, 10, 0, 2),
+      IsHitTestVisible = false,
+    };
   }
 
   private Control CreateModpackListItem(ModpackItemViewModel modpack)

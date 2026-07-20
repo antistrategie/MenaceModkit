@@ -118,6 +118,52 @@ public sealed class ModpacksViewModel : ViewModelBase
             this.RaiseAndSetIfChanged(ref _selectedModpack, value);
             this.RaisePropertyChanged(nameof(DeployToggleText));
             value?.RefreshStatsPatches();
+            if (!Equals(_selectedListRow, value))
+            {
+                _selectedListRow = value;
+                this.RaisePropertyChanged(nameof(SelectedListRow));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Display rows for the sectioned list: a <see cref="ModListSection"/> header followed
+    /// by its mods. Selection bridges to <see cref="SelectedModpack"/>; headers don't count.
+    /// </summary>
+    public ObservableCollection<object> ListRows { get; } = new();
+
+    private object? _selectedListRow;
+    public object? SelectedListRow
+    {
+        get => _selectedListRow;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedListRow, value);
+            SelectedModpack = value as ModpackItemViewModel;
+        }
+    }
+
+    private static string SectionFor(ModpackItemViewModel vm)
+    {
+        if (!vm.IsStandalone) return "YOUR MODPACKS (STAGING)";
+        if (!vm.IsExternalMod) return "BUNDLED DEV MODS";
+        return vm.Description switch
+        {
+            "Installed modpack" => "INSTALLED MODPACKS",
+            "Jiangyu mod" => "JIANGYU MODS",
+            "CustomLeader leader pack" => "CUSTOM LEADERS",
+            _ => "MELONLOADER MODS",
+        };
+    }
+
+    private void RebuildListRows()
+    {
+        ListRows.Clear();
+        foreach (var group in AllModpacks.GroupBy(SectionFor))
+        {
+            ListRows.Add(new ModListSection(group.Key, group.Count()));
+            foreach (var vm in group)
+                ListRows.Add(vm);
         }
     }
 
@@ -233,6 +279,8 @@ public sealed class ModpacksViewModel : ViewModelBase
 
                 var vm = new ModpackItemViewModel(mod.DisplayName, mod.Author, mod.VersionDisplay,
                     kindLabel, null, fileName, true, _modpackManager, isExternal: true);
+                if (mod.LoadOrder is { } order)
+                    vm.LoadOrder = order; // synthetic manifest: no SaveMetadata side-effect
 
                 // Check for known-conflicting mods
                 foreach (var (substring, warning) in ConflictingMods)
@@ -252,6 +300,7 @@ public sealed class ModpacksViewModel : ViewModelBase
             ModkitLog.Warn($"[ModpacksViewModel] Installed-mods scan failed: {ex.Message}");
         }
 
+        RebuildListRows();
         this.RaisePropertyChanged(nameof(UpdateCount));
     }
 
@@ -615,7 +664,7 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     public void MoveItemUp(ModpackItemViewModel? item)
     {
-        if (item == null) return;
+        if (item == null || item.IsStandalone) return; // only staging modpacks reorder
         var index = AllModpacks.IndexOf(item);
         if (index <= 0) return;
         AllModpacks.Move(index, index - 1);
@@ -625,7 +674,7 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     public void MoveItemDown(ModpackItemViewModel? item)
     {
-        if (item == null) return;
+        if (item == null || item.IsStandalone) return; // only staging modpacks reorder
         var index = AllModpacks.IndexOf(item);
         if (index < 0 || index >= AllModpacks.Count - 1) return;
         AllModpacks.Move(index, index + 1);
@@ -635,6 +684,7 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     public void MoveItem(ModpackItemViewModel item, int targetIndex)
     {
+        if (item.IsStandalone) return; // only staging modpacks reorder
         var currentIndex = AllModpacks.IndexOf(item);
         if (currentIndex < 0 || targetIndex < 0 || targetIndex >= AllModpacks.Count || currentIndex == targetIndex)
             return;
@@ -645,11 +695,14 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     private void ReassignLoadOrders()
     {
-        for (int i = 0; i < AllModpacks.Count; i++)
+        var order = 10;
+        foreach (var vm in AllModpacks.Where(m => !m.IsStandalone))
         {
-            AllModpacks[i].LoadOrder = (i + 1) * 10;
+            vm.LoadOrder = order;
+            order += 10;
         }
         LoadOrderVM.Refresh();
+        RebuildListRows();
     }
 
     public void RefreshModpacks()
@@ -1127,3 +1180,6 @@ public class AssetPatchEntry
     public string DisplayName => System.IO.Path.GetFileName(RelativePath);
     public string PathSummary => RelativePath;
 }
+
+/// <summary>A section header row in the sectioned modpack list.</summary>
+public sealed record ModListSection(string Title, int Count);

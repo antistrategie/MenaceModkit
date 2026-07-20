@@ -1,5 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Menace.ModManager.ViewModels"
+        xmlns:mm="clr-namespace:Menace.Modkit.ModManagement;assembly=Menace.Modkit.ModManagement"
         x:Class="Menace.ModManager.Views.MainWindow"
         Width="980" Height="680"
         Title="Menace Mod Manager">
@@ -64,30 +66,38 @@
       </StackPanel>
 
       <!-- Column header -->
-      <Grid DockPanel.Dock="Top" ColumnDefinitions="60,110,*,150,130" Margin="4,0,4,4">
+      <Grid DockPanel.Dock="Top" ColumnDefinitions="60,*,70,150,130" Margin="4,0,4,4">
         <TextBlock Grid.Column="0" Text="On" Opacity="0.6" />
-        <TextBlock Grid.Column="1" Text="Kind" Opacity="0.6" />
-        <TextBlock Grid.Column="2" Text="Name" Opacity="0.6" />
+        <TextBlock Grid.Column="1" Text="Name" Opacity="0.6" />
+        <TextBlock Grid.Column="2" Text="Order" Opacity="0.6" />
         <TextBlock Grid.Column="3" Text="Version" Opacity="0.6" />
         <TextBlock Grid.Column="4" Text="Author" Opacity="0.6" />
       </Grid>
 
-      <!-- Mod list -->
-      <ListBox ItemsSource="{Binding Mods}" SelectedItem="{Binding Selected}">
-        <ListBox.ItemTemplate>
-          <DataTemplate>
-            <Grid ColumnDefinitions="60,110,*,150,130">
+      <!-- Mod list, sectioned by kind -->
+      <ListBox ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}">
+        <ListBox.DataTemplates>
+          <DataTemplate DataType="vm:ModSection">
+            <DockPanel Margin="0,6,0,2" IsHitTestVisible="False">
+              <TextBlock DockPanel.Dock="Left" Text="{Binding Title}"
+                         FontSize="11" FontWeight="Bold" Opacity="0.55" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding Count, StringFormat=' ({0})'}"
+                         FontSize="11" Opacity="0.4" VerticalAlignment="Center" />
+            </DockPanel>
+          </DataTemplate>
+          <DataTemplate DataType="mm:ManagedMod">
+            <Grid ColumnDefinitions="60,*,70,150,130">
               <CheckBox Grid.Column="0"
                         IsChecked="{Binding IsEnabled, Mode=OneWay}"
                         IsEnabled="{Binding CanToggle}"
                         Click="OnToggleClick" />
-              <TextBlock Grid.Column="1" Text="{Binding Kind}" VerticalAlignment="Center" />
-              <TextBlock Grid.Column="2" Text="{Binding DisplayName}" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="1" Text="{Binding DisplayName}" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Text="{Binding LoadOrderDisplay}" VerticalAlignment="Center" Opacity="0.7" />
               <TextBlock Grid.Column="3" Text="{Binding VersionDisplay}" VerticalAlignment="Center" />
               <TextBlock Grid.Column="4" Text="{Binding Author}" VerticalAlignment="Center" />
             </Grid>
           </DataTemplate>
-        </ListBox.ItemTemplate>
+        </ListBox.DataTemplates>
       </ListBox>
 
     </DockPanel>

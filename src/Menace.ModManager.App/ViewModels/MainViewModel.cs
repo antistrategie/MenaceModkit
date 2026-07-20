@@ -24,6 +24,21 @@ public sealed class MainViewModel : ReactiveObject
 
     public ObservableCollection<ManagedMod> Mods { get; } = new();
 
+    /// <summary>Display rows: a <see cref="ModSection"/> header followed by its mods.</summary>
+    public ObservableCollection<object> Rows { get; } = new();
+
+    /// <summary>ListBox selection bridge — only mod rows count as a selection.</summary>
+    private object? _selectedRow;
+    public object? SelectedRow
+    {
+        get => _selectedRow;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedRow, value);
+            Selected = value as ManagedMod;
+        }
+    }
+
     private const string LatestSuffix = " (latest)";
 
     /// <summary>MelonLoader versions offered in the picker (newest first, tagged "(latest)").</summary>
@@ -237,8 +252,24 @@ public sealed class MainViewModel : ReactiveObject
         try
         {
             Mods.Clear();
-            foreach (var mod in _catalog.Scan().OrderBy(m => KindRank(m.Kind)).ThenBy(m => m.DisplayName))
+            Rows.Clear();
+
+            var ordered = _catalog.Scan()
+                .OrderBy(m => KindRank(m.Kind))
+                .ThenBy(m => m.LoadOrder ?? int.MaxValue)
+                .ThenBy(m => m.DisplayName)
+                .ToList();
+
+            foreach (var mod in ordered)
                 Mods.Add(mod);
+
+            // One section per kind present, in rank order, with a header row.
+            foreach (var group in ordered.GroupBy(m => m.Kind))
+            {
+                Rows.Add(new ModSection(SectionTitle(group.Key), group.Count()));
+                foreach (var mod in group)
+                    Rows.Add(mod);
+            }
 
             var path = _catalog.ModsPath;
             Status = path == null
@@ -254,14 +285,25 @@ public sealed class MainViewModel : ReactiveObject
         }
     }
 
-    // Infrastructure (loaders) first, then modpacks, Jiangyu mods, raw MelonMods.
+    // Infrastructure (loaders) first, then modpacks, Jiangyu mods, raw MelonMods, leader packs.
     private static int KindRank(ModKind kind) => kind switch
     {
         ModKind.Infrastructure => 0,
         ModKind.Modpack => 1,
         ModKind.Jiangyu => 2,
         ModKind.MelonMod => 3,
-        _ => 4,
+        ModKind.Leader => 4,
+        _ => 5,
+    };
+
+    private static string SectionTitle(ModKind kind) => kind switch
+    {
+        ModKind.Infrastructure => "INFRASTRUCTURE",
+        ModKind.Modpack => "MODPACKS",
+        ModKind.Jiangyu => "JIANGYU MODS",
+        ModKind.MelonMod => "MELONLOADER MODS",
+        ModKind.Leader => "CUSTOM LEADERS",
+        _ => "OTHER",
     };
 
     private void RefreshLoaderStatuses()
@@ -401,3 +443,6 @@ public sealed class MainViewModel : ReactiveObject
             () => Task.Run(() => _installService.Uninstall(mod)));
     }
 }
+
+/// <summary>A section header row in the mod list (one per <see cref="Menace.Modkit.ModManagement.ModKind"/> present).</summary>
+public sealed record ModSection(string Title, int Count);

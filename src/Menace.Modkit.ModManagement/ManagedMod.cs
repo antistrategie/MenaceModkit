@@ -50,6 +50,15 @@ public sealed class ManagedMod
     /// </summary>
     public string? CompiledForJiangyu { get; init; }
 
+    /// <summary>
+    /// For modpacks: the mod-owned <c>loadOrder</c> from its manifest (patch application
+    /// order at runtime, last-wins). Null for kinds without ordering semantics.
+    /// </summary>
+    public int? LoadOrder { get; init; }
+
+    /// <summary>Load order for display — empty for kinds without ordering semantics.</summary>
+    public string LoadOrderDisplay => LoadOrder?.ToString() ?? string.Empty;
+
     /// <summary>Version shown in the UI — includes the Jiangyu target for Jiangyu mods.</summary>
     public string VersionDisplay =>
         string.IsNullOrEmpty(CompiledForJiangyu)

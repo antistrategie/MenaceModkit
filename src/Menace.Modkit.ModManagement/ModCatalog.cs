@@ -243,6 +243,7 @@ public sealed class ModCatalog
             DisplayName = name,
             Version = manifest?.Version ?? string.Empty,
             Author = manifest?.Author ?? string.Empty,
+            LoadOrder = manifest?.LoadOrder,
             IsEnabled = enabled,
             Location = dir,
         };
