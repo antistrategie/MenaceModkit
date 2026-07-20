@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Threading.Tasks;
+using Menace.Modkit.App.Services;
 using Menace.Modkit.ModManagement.Tests.Helpers;
 using Xunit;
 
@@ -87,5 +88,21 @@ public sealed class MelonLoaderInstallerTests : IDisposable
         var installer = new MelonLoaderInstaller(_config, new StubHttpHandler().Json(ReleasesApi, ReleasesJson));
 
         await Assert.ThrowsAsync<InvalidOperationException>(() => installer.InstallAsync("v0.9.1"));
+    }
+}
+
+public sealed class MelonLoaderVersionPolicyTests
+{
+    [Theory]
+    [InlineData("0.7.3", "0.7.2.2388", true)]      // newer family — must not nag to downgrade
+    [InlineData("0.7.2.2388", "0.7.2.2388", true)]  // exact
+    [InlineData("0.7.2.9999", "0.7.2.2388", true)]  // newer build
+    [InlineData("0.7.2.1000", "0.7.2.2388", false)] // older build
+    [InlineData("0.7.1", "0.7.2.2388", false)]      // older family
+    [InlineData("1.0.0", "0.7.2.2388", true)]       // future major
+    public void MeetsMinimumVersion_IsAtLeastSemantics(string installed, string expected, bool ok)
+    {
+        Assert.Equal(ok, ModLoaderInstaller.MeetsMinimumVersion(
+            Version.Parse(installed), Version.Parse(expected)));
     }
 }

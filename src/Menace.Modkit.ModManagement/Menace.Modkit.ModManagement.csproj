@@ -11,6 +11,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="Menace.Modkit.ModManagement.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Archive import for modpacks (.zip/.7z/.rar/.tar...) -->
     <PackageReference Include="SharpCompress" Version="0.40.0" />
     <!-- Roslyn: compile mod source (CompilationService / ReferenceResolver) -->

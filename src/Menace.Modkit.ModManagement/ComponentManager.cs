@@ -156,8 +156,9 @@ public sealed class ComponentManager : IDisposable
                     }
                     else if (installer.IsInstalledMelonLoaderVersionCompatible(out _, out _, out _))
                     {
-                        // Same family (e.g., 0.7.2.x) - compatible but update available
-                        status.State = ComponentState.UpdateAvailable;
+                        // At or above the required version — nothing to install; never
+                        // offer what would amount to a downgrade.
+                        status.State = ComponentState.UpToDate;
                     }
                     else
                     {

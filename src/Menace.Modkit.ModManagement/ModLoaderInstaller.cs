@@ -559,22 +559,27 @@ public class ModLoaderInstaller
             return true;
         }
 
-        // Require same major/minor/patch family and at least required build when present.
-        if (installedParsed.Major != expectedParsed.Major ||
-            installedParsed.Minor != expectedParsed.Minor ||
-            installedParsed.Build != expectedParsed.Build)
+        // Minimum-version semantics: anything at or above the configured version passes
+        // (the ecosystem requires newer loaders — e.g. Jiangyu needs >= 0.7.3 — so an
+        // exact-family pin would nag users into a downgrade). Known-bad versions are
+        // still rejected by the deny-list above.
+        if (!MeetsMinimumVersion(installedParsed, expectedParsed))
         {
-            reason = $"Installed MelonLoader {installedVersion} is not in the required {expectedVersion} family.";
-            return false;
-        }
-
-        if (expectedParsed.Revision > 0 && installedParsed.Revision < expectedParsed.Revision)
-        {
-            reason = $"Installed MelonLoader build {installedVersion} is older than required {expectedVersion}.";
+            reason = $"Installed MelonLoader {installedVersion} is older than required {expectedVersion}.";
             return false;
         }
 
         return true;
+    }
+
+    /// <summary>True when <paramref name="installed"/> is at or above <paramref name="expected"/>.</summary>
+    internal static bool MeetsMinimumVersion(Version installed, Version expected)
+    {
+        // Version treats missing components as -1; normalise so 0.7.3 >= 0.7.3.0.
+        static Version Pad(Version v) => new(
+            Math.Max(v.Major, 0), Math.Max(v.Minor, 0),
+            Math.Max(v.Build, 0), Math.Max(v.Revision, 0));
+        return Pad(installed) >= Pad(expected);
     }
 
     private static bool IsExplicitlyUnsupportedVersion(string rawVersion, Version? parsed)
