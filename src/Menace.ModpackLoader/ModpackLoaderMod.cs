@@ -110,8 +110,6 @@ public partial class ModpackLoaderMod : MelonMod
         // Patch bug reporter to include mod list in all reports
         BugReporterPatches.Initialize(LoggerInstance, HarmonyInstance);
 
-        // Initialize boot skip patches (splash/intro skipping in dev mode)
-        BootSkip.Initialize(HarmonyInstance);
 
         // Initialize custom maps SDK (seed/size overrides, generator config, mission pool injection)
         CustomMaps.Initialize(HarmonyInstance);
@@ -312,7 +310,6 @@ public partial class ModpackLoaderMod : MelonMod
         Pathfinding.RegisterConsoleCommands();
         LineOfSight.RegisterConsoleCommands();
         TileEffects.RegisterConsoleCommands();
-        BootSkip.RegisterConsoleCommands();
         SimpleAnimations.RegisterConsoleCommands();
         UIInspector.RegisterConsoleCommands();
         Modpacks.RegisterConsoleCommands();
