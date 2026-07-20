@@ -72,8 +72,14 @@ public sealed class MainViewModel : ReactiveObject
     public ManagedMod? Selected
     {
         get => _selected;
-        set => this.RaiseAndSetIfChanged(ref _selected, value);
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selected, value);
+            this.RaisePropertyChanged(nameof(HasSelection));
+        }
     }
+
+    public bool HasSelection => Selected is not null;
 
     private string _melonLoaderStatus = string.Empty;
     public string MelonLoaderStatus

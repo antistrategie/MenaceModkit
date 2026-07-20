@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
@@ -24,10 +28,12 @@ public partial class MainWindow : Window
     private void OnDragEnter(object? sender, DragEventArgs e) => SetEffect(e);
     private void OnDragOver(object? sender, DragEventArgs e) => SetEffect(e);
 
-    // Accept the drag if it carries files. Gated on the format (known during the drag),
-    // not on GetFiles() (whose data may not be materialised until the actual drop).
+    // Accept the drag if it carries files — or text, since some Linux file managers
+    // deliver drags as a text/uri-list that never surfaces through the File format.
+    // Gated on the format (known during the drag), not on GetFiles() (whose data may
+    // not be materialised until the actual drop).
     private static void SetEffect(DragEventArgs e)
-        => e.DragEffects = e.DataTransfer?.Formats.Contains(DataFormat.File) == true
+        => e.DragEffects = e.DataTransfer?.Formats.Any(f => f == DataFormat.File || f == DataFormat.Text) == true
             ? DragDropEffects.Copy
             : DragDropEffects.None;
 
@@ -37,16 +43,53 @@ public partial class MainWindow : Window
         if (Vm is not { IsBusy: false } vm)
             return;
 
-        var files = e.DataTransfer?.TryGetFiles();
-        if (files is null)
-            return;
+        foreach (var path in ExtractDroppedPaths(e))
+            await vm.InstallAsync(path);
+    }
 
-        foreach (var item in files)
+    /// <summary>
+    /// Local paths from a drop: the File format when available, otherwise a text
+    /// payload parsed as a uri-list / plain paths (one per line, file:// or absolute).
+    /// </summary>
+    private static List<string> ExtractDroppedPaths(DragEventArgs e)
+    {
+        var paths = new List<string>();
+
+        var files = e.DataTransfer?.TryGetFiles();
+        if (files is not null)
         {
-            var path = item.TryGetLocalPath();
-            if (!string.IsNullOrEmpty(path))
-                await vm.InstallAsync(path);
+            foreach (var item in files)
+            {
+                var path = item.TryGetLocalPath();
+                if (!string.IsNullOrEmpty(path))
+                    paths.Add(path);
+            }
         }
+
+        if (paths.Count > 0)
+            return paths;
+
+        var text = e.DataTransfer?.TryGetText();
+        if (string.IsNullOrWhiteSpace(text))
+            return paths;
+
+        foreach (var raw in text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (raw.StartsWith('#'))
+                continue; // uri-list comment line
+
+            string? path = null;
+            if (raw.StartsWith("file://", StringComparison.OrdinalIgnoreCase) &&
+                Uri.TryCreate(raw, UriKind.Absolute, out var uri))
+                path = uri.LocalPath;
+            else if (raw.StartsWith('/'))
+                path = raw;
+
+            if (!string.IsNullOrEmpty(path) && (File.Exists(path) || Directory.Exists(path)))
+                paths.Add(path);
+        }
+
+        return paths;
     }
 
     private void OnRefreshClick(object? sender, RoutedEventArgs e) => Vm?.Refresh();
