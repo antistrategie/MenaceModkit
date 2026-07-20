@@ -206,25 +206,38 @@ public sealed class ModpacksViewModel : ViewModelBase
             AllModpacks.Add(vm);
         }
 
-        // Scan game's Mods/ directory for unknown standalone DLLs
-        var modsBase = _modpackManager.ModsBasePath;
-        if (!string.IsNullOrEmpty(modsBase) && Directory.Exists(modsBase))
+        // Everything actually installed in the game's Mods/ — any kind (installed modpack
+        // folders, Jiangyu mods, CustomLeader packs, raw MelonMod DLLs) — via the same
+        // stateless catalog the standalone manager uses. Staging modpacks already listed
+        // above are skipped by name; infrastructure (loaders) is managed elsewhere.
+        try
         {
-            foreach (var dllPath in Directory.GetFiles(modsBase, "*.dll"))
+            foreach (var mod in new Menace.Modkit.ModManagement.ModCatalog().Scan())
             {
-                var fileName = Path.GetFileName(dllPath);
-                if (InfrastructureDlls.Contains(fileName)) continue;
-                if (knownDllFileNames.Contains(fileName)) continue;
-                if (IsSystemDll(fileName)) continue;
+                if (mod.Kind == Menace.Modkit.ModManagement.ModKind.Infrastructure) continue;
+                if (!mod.IsEnabled) continue;
+                if (seenNames.Contains(mod.DisplayName)) continue;
 
-                var displayName = Path.GetFileNameWithoutExtension(fileName);
-                var vm = new ModpackItemViewModel(displayName, "Unknown", "", "",
-                    null, fileName, true, _modpackManager, isExternal: true);
+                var isDll = mod.Location.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+                var fileName = isDll ? Path.GetFileName(mod.Location) : string.Empty;
+                if (isDll && (knownDllFileNames.Contains(fileName) || IsSystemDll(fileName)))
+                    continue;
+
+                var kindLabel = mod.Kind switch
+                {
+                    Menace.Modkit.ModManagement.ModKind.Modpack => "Installed modpack",
+                    Menace.Modkit.ModManagement.ModKind.Jiangyu => "Jiangyu mod",
+                    Menace.Modkit.ModManagement.ModKind.Leader => "CustomLeader leader pack",
+                    _ => "MelonLoader mod",
+                };
+
+                var vm = new ModpackItemViewModel(mod.DisplayName, mod.Author, mod.VersionDisplay,
+                    kindLabel, null, fileName, true, _modpackManager, isExternal: true);
 
                 // Check for known-conflicting mods
                 foreach (var (substring, warning) in ConflictingMods)
                 {
-                    if (fileName.Contains(substring, StringComparison.OrdinalIgnoreCase))
+                    if (isDll && fileName.Contains(substring, StringComparison.OrdinalIgnoreCase))
                     {
                         vm.ConflictWarning = warning;
                         break;
@@ -233,6 +246,10 @@ public sealed class ModpacksViewModel : ViewModelBase
 
                 AllModpacks.Add(vm);
             }
+        }
+        catch (Exception ex)
+        {
+            ModkitLog.Warn($"[ModpacksViewModel] Installed-mods scan failed: {ex.Message}");
         }
 
         this.RaisePropertyChanged(nameof(UpdateCount));
