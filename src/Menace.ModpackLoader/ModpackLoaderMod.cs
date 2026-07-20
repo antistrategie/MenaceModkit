@@ -110,8 +110,6 @@ public partial class ModpackLoaderMod : MelonMod
         // Patch bug reporter to include mod list in all reports
         BugReporterPatches.Initialize(LoggerInstance, HarmonyInstance);
 
-        // Initialize boot skip patches (splash/intro skipping in dev mode)
-        BootSkip.Initialize(HarmonyInstance);
 
         // Initialize custom maps SDK (seed/size overrides, generator config, mission pool injection)
         CustomMaps.Initialize(HarmonyInstance);
@@ -169,7 +167,6 @@ public partial class ModpackLoaderMod : MelonMod
         PlayerLog($"Bundles: {BundleLoader.LoadedBundleCount} ({BundleLoader.LoadedAssetCount} assets)");
         PlayerLog($"Asset replacements registered: {AssetReplacer.RegisteredCount}");
         PlayerLog($"Custom sprites loaded: {AssetReplacer.CustomSpriteCount}");
-        PlayerLog($"Compiled assets in manifest: {CompiledAssetLoader.ManifestAssetCount}");
         PlayerLog($"Mod DLLs: {DllLoader.GetLoadedAssemblies().Count}");
         var pluginSummary = DllLoader.GetPluginSummary();
         if (pluginSummary != null)
@@ -256,10 +253,6 @@ public partial class ModpackLoaderMod : MelonMod
         // Initialize save system watcher (tries to find saves folder)
         SaveSystemPatches.TryInitialize();
 
-        // Load compiled assets now that Unity is ready
-        // (manifest was loaded during init, actual Resources.Load happens here)
-        CompiledAssetLoader.LoadAssets();
-
         // Load any pending custom sprites asynchronously to avoid stutter
         // This spreads the work across multiple frames (5 sprites per frame by default)
         var pendingCount = AssetReplacer.PendingSpriteCount;
@@ -317,7 +310,6 @@ public partial class ModpackLoaderMod : MelonMod
         Pathfinding.RegisterConsoleCommands();
         LineOfSight.RegisterConsoleCommands();
         TileEffects.RegisterConsoleCommands();
-        BootSkip.RegisterConsoleCommands();
         SimpleAnimations.RegisterConsoleCommands();
         UIInspector.RegisterConsoleCommands();
         Modpacks.RegisterConsoleCommands();
@@ -479,13 +471,6 @@ public partial class ModpackLoaderMod : MelonMod
 
         SdkLogger.Msg($"Loaded {_loadedModpacks.Count} modpack(s)");
 
-        // Load compiled asset manifest (actual asset loading deferred until Unity is ready)
-        // Assets are embedded in resources.assets and registered with ResourceManager.
-        var compiledDir = Path.Combine(modsPath, "compiled");
-        if (Directory.Exists(compiledDir))
-        {
-            CompiledAssetLoader.LoadManifest(compiledDir);
-        }
     }
 
     /// <summary>
@@ -706,10 +691,6 @@ public partial class ModpackLoaderMod : MelonMod
             SdkLogger.Msg("No modpacks to apply");
             return true;
         }
-
-        // First, register any bundle-loaded clone templates with DataTemplateLoader
-        // This handles clones that were compiled into the templates.bundle
-        RegisterBundleClones();
 
         var allSucceeded = true;
 

@@ -998,7 +998,7 @@ public static class AssetReplacer
 
     private static int ApplyBundleReplacements()
     {
-        if (CompiledAssetLoader.LoadedAssetCount == 0)
+        if (BundleLoader.LoadedAssetCount == 0)
             return 0;
 
         int replaced = 0;
@@ -1019,7 +1019,7 @@ public static class AssetReplacer
     /// </summary>
     private static int ApplyBundleTextureReplacements()
     {
-        var bundleTextures = CompiledAssetLoader.GetAssetsByType("Texture2D");
+        var bundleTextures = BundleLoader.GetAssetsByType("Texture2D");
         if (bundleTextures.Count == 0)
             return 0;
 
@@ -1097,7 +1097,7 @@ public static class AssetReplacer
     /// </summary>
     private static int ApplyBundleAudioReplacements()
     {
-        var bundleClips = CompiledAssetLoader.GetAssetsByType("AudioClip");
+        var bundleClips = BundleLoader.GetAssetsByType("AudioClip");
         if (bundleClips.Count == 0)
             return 0;
 
@@ -1168,7 +1168,7 @@ public static class AssetReplacer
 
     private static int ApplyBundleMeshReplacements()
     {
-        var bundleMeshes = CompiledAssetLoader.GetAssetsByType("Mesh");
+        var bundleMeshes = BundleLoader.GetAssetsByType("Mesh");
         if (bundleMeshes.Count == 0)
             return 0;
 
@@ -1258,7 +1258,7 @@ public static class AssetReplacer
 
     private static int ApplyBundleMaterialReplacements()
     {
-        var bundleMaterials = CompiledAssetLoader.GetAssetsByType("Material");
+        var bundleMaterials = BundleLoader.GetAssetsByType("Material");
         if (bundleMaterials.Count == 0)
             return 0;
 
@@ -1346,7 +1346,7 @@ public static class AssetReplacer
 
     private static int ApplyBundlePrefabReplacements()
     {
-        var bundlePrefabs = CompiledAssetLoader.GetAssetsByType("GameObject");
+        var bundlePrefabs = BundleLoader.GetAssetsByType("GameObject");
         if (bundlePrefabs.Count == 0)
             return 0;
 

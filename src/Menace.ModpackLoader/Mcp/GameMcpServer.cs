@@ -80,7 +80,7 @@ public static class GameMcpServer
 
             // Early template injection setting (experimental)
             settings.AddHeader("Template Injection");
-            settings.AddToggle("EarlyInjection", "Early Injection (Experimental)", false);
+            settings.AddToggle("DisableEarlyInjection", "Disable Early Injection", false);
         });
 
         // Listen for setting changes

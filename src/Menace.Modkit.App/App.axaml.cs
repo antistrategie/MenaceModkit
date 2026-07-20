@@ -25,6 +25,10 @@ public class App : Application
         // Load only App.axaml for styles
         AvaloniaXamlLoader.Load(this);
 
+        // Supply the mod-management library with this app's live configuration
+        // (game path, dev-tools flag, component cache) before any service uses it.
+        ModManagement.ModkitConfig.Current = new Services.AppSettingsModkitConfig();
+
         // Set up dependency injection
         var services = new ServiceCollection();
         services.AddMenaceModkitCore();

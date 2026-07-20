@@ -81,6 +81,18 @@ jobs:
             -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
             -o dist/gui-win-x64
 
+      - name: Build Mod Manager (Linux)
+        run: |
+          dotnet publish src/Menace.ModManager.App -c Release -r linux-x64 --self-contained \
+            -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
+            -o dist/manager-linux-x64
+
+      - name: Build Mod Manager (Windows)
+        run: |
+          dotnet publish src/Menace.ModManager.App -c Release -r win-x64 --self-contained \
+            -p:PublishSingleFile=true -p:DebugType=none -p:DebugSymbols=false \
+            -o dist/manager-win-x64
+
       - name: Build MCP Server (Linux)
         run: |
           dotnet publish src/Menace.Modkit.Mcp -c Release -r linux-x64 --self-contained \
@@ -114,6 +126,7 @@ jobs:
 
       - name: Bundle files
         run: |
+          # Modkit GUI: full authoring payload (DataExtractor + ModpackLoader + refs + MCP).
           for platform in linux-x64 win-x64; do
             mkdir -p dist/gui-$platform/third_party/bundled
             mkdir -p dist/gui-$platform/mcp
@@ -131,11 +144,21 @@ jobs:
           cp mcp/README.md dist/gui-linux-x64/mcp/
           cp mcp/README.md dist/gui-win-x64/mcp/
 
+          # Mod Manager: lean — only the version-paired ModpackLoader + manifest
+          # (it downloads MelonLoader / Jiangyu itself on demand; no editors, no MCP).
+          for platform in linux-x64 win-x64; do
+            mkdir -p dist/manager-$platform/third_party/bundled
+            cp third_party/versions.json dist/manager-$platform/third_party/
+            cp -r third_party/bundled/ModpackLoader dist/manager-$platform/third_party/bundled/
+          done
+
       - name: Create archives
         run: |
           cd dist
           tar -czf menace-modkit-linux-x64.tar.gz -C gui-linux-x64 .
           zip -q -r menace-modkit-win-x64.zip gui-win-x64/
+          tar -czf menace-mod-manager-linux-x64.tar.gz -C manager-linux-x64 .
+          zip -q -r menace-mod-manager-win-x64.zip manager-win-x64/
 
       - name: Commit manifest updates
         if: github.event_name == 'workflow_dispatch'
@@ -150,20 +173,32 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.VERSION }}
-          name: Menace Modkit v${{ steps.version.outputs.VERSION }}${{ steps.version.outputs.IS_BETA == 'true' && ' (Beta)' || '' }}
+          name: Menace Modkit & Mod Manager v${{ steps.version.outputs.VERSION }}${{ steps.version.outputs.IS_BETA == 'true' && ' (Beta)' || '' }}
           prerelease: ${{ steps.version.outputs.IS_BETA == 'true' }}
           generate_release_notes: true
           body: |
+            Two apps ship in this release. Most people want the **Mod Manager**; get the **Modkit** only if you're making mods.
+
+            ### 📦 Menace Mod Manager — install & play with mods
+            A lean, standalone manager (r2modman / Vortex style) for mods you've downloaded. It installs, enables/disables and uninstalls every kind of MENACE mod — modpacks, raw MelonLoader mods, Jiangyu mods and custom-leader packs — from a single drag-and-drop window, and sets up the loaders they need (MelonLoader, Modpack Loader, Jiangyu). No editors, nothing to configure. **If you just want to play with mods, this is the one.**
+
+            ### 🛠 Menace Modkit — make mods
+            The full authoring toolkit for *building* MENACE mods: visual editors for templates, stats, assets, clones and custom leaders; a C# editor with live compilation; asset extraction/import; load-order and conflict tools; and one-click deploy to test in-game. Bundles the runtime loaders and an optional MCP server for AI-assisted authoring. **Get this only if you want to create mods.**
+
+            Both are self-contained — no .NET install needed. Mods are loaded at runtime from the game's `Mods/` folder; neither app patches the game's own files.
+
             ## Download
 
-            | Platform | File |
-            |----------|------|
-            | **Windows** | `menace-modkit-win-x64.zip` |
-            | **Linux** | `menace-modkit-linux-x64.tar.gz` |
+            | App | Windows | Linux |
+            |-----|---------|-------|
+            | **Mod Manager** — play with mods | `menace-mod-manager-win-x64.zip` | `menace-mod-manager-linux-x64.tar.gz` |
+            | **Modkit** — make mods | `menace-modkit-win-x64.zip` | `menace-modkit-linux-x64.tar.gz` |
 
-            Extract and run. The app downloads required components on first launch.
+            Extract and run. Each app downloads any extra components it needs on first launch.
 
             ${{ steps.version.outputs.IS_BETA == 'true' && '> **Note:** This is a beta release. It may contain bugs or incomplete features. Use with caution.' || '' }}
           files: |
             dist/menace-modkit-linux-x64.tar.gz
             dist/menace-modkit-win-x64.zip
+            dist/menace-mod-manager-linux-x64.tar.gz
+            dist/menace-mod-manager-win-x64.zip

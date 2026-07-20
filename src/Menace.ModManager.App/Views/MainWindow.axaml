@@ -1,0 +1,122 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Menace.ModManager.ViewModels"
+        xmlns:mm="clr-namespace:Menace.Modkit.ModManagement;assembly=Menace.Modkit.ModManagement"
+        x:Class="Menace.ModManager.Views.MainWindow"
+        Width="1280" Height="860"
+        MinWidth="820" MinHeight="560"
+        Title="Menace Mod Manager">
+  <Grid DragDrop.AllowDrop="True">
+
+    <!-- Main content (disabled while a long operation runs) -->
+    <DockPanel Margin="12" IsEnabled="{Binding NotBusy}">
+
+      <!-- Status + refresh -->
+      <DockPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+        <Button DockPanel.Dock="Right" Content="Refresh" Click="OnRefreshClick" />
+        <Button DockPanel.Dock="Right" Content="Locate game…" Click="OnLocateGameClick" Margin="0,0,6,0" />
+        <TextBlock Text="{Binding Status}" VerticalAlignment="Center"
+                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+      </DockPanel>
+
+      <!-- Error banner -->
+      <Border DockPanel.Dock="Top" IsVisible="{Binding HasError}"
+              Background="#C0392B" CornerRadius="4" Padding="10,6" Margin="0,0,0,10">
+        <DockPanel>
+          <Button DockPanel.Dock="Right" Content="✕" Click="OnDismissErrorClick"
+                  Background="Transparent" BorderThickness="0" Foreground="White" Padding="8,0" />
+          <TextBlock Text="{Binding ErrorMessage}" Foreground="White"
+                     TextWrapping="Wrap" VerticalAlignment="Center" />
+        </DockPanel>
+      </Border>
+
+      <!-- Loaders -->
+      <Border DockPanel.Dock="Top" Margin="0,0,0,12" Padding="12" CornerRadius="6"
+              BorderThickness="1" BorderBrush="#33808080">
+        <StackPanel Spacing="2">
+          <TextBlock Text="LOADERS" FontSize="11" FontWeight="Bold" Opacity="0.55" Margin="0,0,0,6" />
+          <Grid ColumnDefinitions="150,*,Auto" RowDefinitions="Auto,Auto,Auto">
+
+            <TextBlock Grid.Row="0" Grid.Column="0" Text="MelonLoader" VerticalAlignment="Center" />
+            <StackPanel Grid.Row="0" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+              <TextBlock Text="{Binding MelonLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" />
+              <ComboBox ItemsSource="{Binding MelonLoaderVersions}" SelectedItem="{Binding SelectedMelonLoaderVersion}" MinWidth="130" />
+            </StackPanel>
+            <Button Grid.Row="0" Grid.Column="2" Content="Get" Click="OnInstallMelonLoaderClick" IsEnabled="{Binding CanGetMelonLoader}" />
+
+            <TextBlock Grid.Row="1" Grid.Column="0" Text="Modpack Loader" VerticalAlignment="Center" Margin="0,8,0,0" />
+            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,8,0,0">
+              <TextBlock Text="{Binding ModpackLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" />
+              <Border IsVisible="{Binding ModpackLoaderUpdateAvailable}"
+                      Background="#2E7D32" CornerRadius="3" Padding="6,1" VerticalAlignment="Center">
+                <TextBlock Text="UPDATE AVAILABLE" FontSize="10" FontWeight="Bold" Foreground="White" />
+              </Border>
+            </StackPanel>
+            <Button Grid.Row="1" Grid.Column="2" Content="Install / Update" Click="OnInstallModpackLoaderClick" Margin="0,8,0,0" />
+
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Jiangyu Loader" VerticalAlignment="Center" Margin="0,8,0,0" />
+            <StackPanel Grid.Row="2" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,8,0,0">
+              <TextBlock Text="{Binding JiangyuLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" />
+              <ComboBox ItemsSource="{Binding JiangyuVersions}" SelectedItem="{Binding SelectedJiangyuVersion}" MinWidth="130" />
+            </StackPanel>
+            <Button Grid.Row="2" Grid.Column="2" Content="Get" Click="OnGetJiangyuClick" Margin="0,8,0,0" IsEnabled="{Binding CanGetJiangyu}" />
+
+          </Grid>
+        </StackPanel>
+      </Border>
+
+      <!-- Mod actions -->
+      <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Spacing="6" Margin="0,10,0,0">
+        <Button Content="Install mod…" Click="OnInstallClick" />
+        <Button Content="Uninstall selected" Click="OnUninstallClick" IsEnabled="{Binding HasSelection}" />
+        <TextBlock Text="…or drop a mod archive here, or copy it and press Ctrl+V"
+                   VerticalAlignment="Center" Opacity="0.5" Margin="8,0,0,0" />
+      </StackPanel>
+
+      <!-- Column header -->
+      <Grid DockPanel.Dock="Top" ColumnDefinitions="60,*,70,150,130" Margin="4,0,4,4">
+        <TextBlock Grid.Column="0" Text="On" Opacity="0.6" />
+        <TextBlock Grid.Column="1" Text="Name" Opacity="0.6" />
+        <TextBlock Grid.Column="2" Text="Order" Opacity="0.6" />
+        <TextBlock Grid.Column="3" Text="Version" Opacity="0.6" />
+        <TextBlock Grid.Column="4" Text="Author" Opacity="0.6" />
+      </Grid>
+
+      <!-- Mod list, sectioned by kind -->
+      <ListBox ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow}">
+        <ListBox.DataTemplates>
+          <DataTemplate DataType="vm:ModSection">
+            <DockPanel Margin="0,6,0,2" IsHitTestVisible="False">
+              <TextBlock DockPanel.Dock="Left" Text="{Binding Title}"
+                         FontSize="11" FontWeight="Bold" Opacity="0.55" VerticalAlignment="Center" />
+              <TextBlock Text="{Binding Count, StringFormat=' ({0})'}"
+                         FontSize="11" Opacity="0.4" VerticalAlignment="Center" />
+            </DockPanel>
+          </DataTemplate>
+          <DataTemplate DataType="mm:ManagedMod">
+            <Grid ColumnDefinitions="60,*,70,150,130">
+              <CheckBox Grid.Column="0"
+                        IsChecked="{Binding IsEnabled, Mode=OneWay}"
+                        IsEnabled="{Binding CanToggle}"
+                        Click="OnToggleClick" />
+              <TextBlock Grid.Column="1" Text="{Binding DisplayName}" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="2" Text="{Binding LoadOrderDisplay}" VerticalAlignment="Center" Opacity="0.7" />
+              <TextBlock Grid.Column="3" Text="{Binding VersionDisplay}" VerticalAlignment="Center" />
+              <TextBlock Grid.Column="4" Text="{Binding Author}" VerticalAlignment="Center" />
+            </Grid>
+          </DataTemplate>
+        </ListBox.DataTemplates>
+      </ListBox>
+
+    </DockPanel>
+
+    <!-- Busy overlay -->
+    <Border IsVisible="{Binding IsBusy}" Background="#99000000">
+      <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="14">
+        <ProgressBar IsIndeterminate="True" Width="240" />
+        <TextBlock Text="{Binding Status}" Foreground="White" HorizontalAlignment="Center" />
+      </StackPanel>
+    </Border>
+
+  </Grid>
+</Window>

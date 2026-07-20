@@ -35,10 +35,11 @@ get_status() {
     curl -s "$GAME_MCP/status" | jq .
 }
 
-# Check CompiledAssetLoader status
+# Check the loose-asset bundle loader status. (The bake/CompiledAssetLoader path
+# was removed in v37 — deploys are loose files applied at runtime by BundleLoader.)
 check_assets() {
-    log_info "Checking CompiledAssetLoader status..."
-    local code='return new { HasManifest = Menace.ModpackLoader.CompiledAssetLoader.HasManifest, ManifestCount = Menace.ModpackLoader.CompiledAssetLoader.ManifestAssetCount, LoadedCount = Menace.ModpackLoader.CompiledAssetLoader.LoadedAssetCount };'
+    log_info "Checking loose bundle loader status..."
+    local code='return new { LoadedBundles = Menace.ModpackLoader.BundleLoader.LoadedBundleCount };'
     curl -s "$GAME_MCP/repl?code=$(echo -n "$code" | jq -sRr @uri)" | jq .
 }
 

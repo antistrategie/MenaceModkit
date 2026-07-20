@@ -75,6 +75,11 @@
       <HintPath>$(GameAssembliesPath)/Assembly-CSharp.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <!-- DataTemplate's base type (SerializedScriptableObject) lives here; needed by TemplateRegistration -->
+    <Reference Include="Il2CppSirenix.Serialization">
+      <HintPath>$(GameAssembliesPath)/Il2CppSirenix.Serialization.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="UnityEngine.UIElementsModule">
       <HintPath>$(GameAssembliesPath)/UnityEngine.UIElementsModule.dll</HintPath>
       <Private>false</Private>

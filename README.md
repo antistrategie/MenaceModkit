@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <strong>A modloader and modding toolkit for <a href="https://store.steampowered.com/app/2432860/MENACE/">MENACE</a>.  Grab the latest version from the <a href="https://github.com/p0ss/MenaceAssetPacker/releases">downloads page</a>
+  <strong>A modloader and modding toolkit for <a href="https://store.steampowered.com/app/2432860/MENACE/">MENACE</a>.  Grab the latest version from the <a href="https://github.com/antistrategie/MenaceModkit/releases">downloads page</a>
 </p>
 
 <p align="center">
@@ -31,12 +31,14 @@
 ## What's Included
 
 
+**Mod Manager** — A lean, standalone app for *installing and playing with* mods (r2modman / Vortex style). Install, enable/disable and uninstall every kind of MENACE mod — modpacks, raw MelonLoader mods, Jiangyu mods and custom-leader packs — from one drag-and-drop window, and it sets up the loaders they need (MelonLoader, Modpack Loader, Jiangyu). No editors, nothing to configure. **If you just want to play with mods, this is the one.**
+
 **ModpackLoader** — A runtime mod that loads your modpacks into the game:
 - Applies stat patches and asset replacements at startup
 - Provides an [SDK](docs/coding-sdk/index.md) for C# mods to interact with the game
 - Includes an in-game [Dev Console](docs/coding-sdk/api/dev-console.md) (press `~`) for debugging and live commands
 
-**Modkit App** — A desktop application for creating and managing mods:
+**Modkit App** — A desktop application for *creating* mods (get this only if you want to make them):
 - **Stats Editor** — Browse and edit game data (weapons, armor, units) with side-by-side vanilla comparison
 - **Asset Browser** — View extracted game assets and set up texture/model/audio replacements
 - **Code Editor** — Write C# mod code with compilation, security scanning, and error checking
@@ -68,11 +70,14 @@
 ### Quick Start
 
 ```bash
-# Build and run the desktop app
+# Just want to install and play with mods? Run the standalone Mod Manager:
+dotnet run --project src/Menace.ModManager.App
+
+# Making mods? Run the full Modkit app:
 dotnet run --project src/Menace.Modkit.App
 ```
 
-On first launch the app will:
+On first launch the Modkit app will:
 1. Detect your game installation
 2. Install MelonLoader (the mod framework) if needed
 3. Deploy the DataExtractor to pull game data

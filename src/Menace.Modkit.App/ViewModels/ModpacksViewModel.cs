@@ -118,6 +118,52 @@ public sealed class ModpacksViewModel : ViewModelBase
             this.RaiseAndSetIfChanged(ref _selectedModpack, value);
             this.RaisePropertyChanged(nameof(DeployToggleText));
             value?.RefreshStatsPatches();
+            if (!Equals(_selectedListRow, value))
+            {
+                _selectedListRow = value;
+                this.RaisePropertyChanged(nameof(SelectedListRow));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Display rows for the sectioned list: a <see cref="ModListSection"/> header followed
+    /// by its mods. Selection bridges to <see cref="SelectedModpack"/>; headers don't count.
+    /// </summary>
+    public ObservableCollection<object> ListRows { get; } = new();
+
+    private object? _selectedListRow;
+    public object? SelectedListRow
+    {
+        get => _selectedListRow;
+        set
+        {
+            this.RaiseAndSetIfChanged(ref _selectedListRow, value);
+            SelectedModpack = value as ModpackItemViewModel;
+        }
+    }
+
+    private static string SectionFor(ModpackItemViewModel vm)
+    {
+        if (!vm.IsStandalone) return "YOUR MODPACKS (STAGING)";
+        if (!vm.IsExternalMod) return "BUNDLED DEV MODS";
+        return vm.Description switch
+        {
+            "Installed modpack" => "INSTALLED MODPACKS",
+            "Jiangyu mod" => "JIANGYU MODS",
+            "CustomLeader leader pack" => "CUSTOM LEADERS",
+            _ => "MELONLOADER MODS",
+        };
+    }
+
+    private void RebuildListRows()
+    {
+        ListRows.Clear();
+        foreach (var group in AllModpacks.GroupBy(SectionFor))
+        {
+            ListRows.Add(new ModListSection(group.Key, group.Count()));
+            foreach (var vm in group)
+                ListRows.Add(vm);
         }
     }
 
@@ -206,25 +252,40 @@ public sealed class ModpacksViewModel : ViewModelBase
             AllModpacks.Add(vm);
         }
 
-        // Scan game's Mods/ directory for unknown standalone DLLs
-        var modsBase = _modpackManager.ModsBasePath;
-        if (!string.IsNullOrEmpty(modsBase) && Directory.Exists(modsBase))
+        // Everything actually installed in the game's Mods/ — any kind (installed modpack
+        // folders, Jiangyu mods, CustomLeader packs, raw MelonMod DLLs) — via the same
+        // stateless catalog the standalone manager uses. Staging modpacks already listed
+        // above are skipped by name; infrastructure (loaders) is managed elsewhere.
+        try
         {
-            foreach (var dllPath in Directory.GetFiles(modsBase, "*.dll"))
+            foreach (var mod in new Menace.Modkit.ModManagement.ModCatalog().Scan())
             {
-                var fileName = Path.GetFileName(dllPath);
-                if (InfrastructureDlls.Contains(fileName)) continue;
-                if (knownDllFileNames.Contains(fileName)) continue;
-                if (IsSystemDll(fileName)) continue;
+                if (mod.Kind == Menace.Modkit.ModManagement.ModKind.Infrastructure) continue;
+                if (!mod.IsEnabled) continue;
+                if (seenNames.Contains(mod.DisplayName)) continue;
 
-                var displayName = Path.GetFileNameWithoutExtension(fileName);
-                var vm = new ModpackItemViewModel(displayName, "Unknown", "", "",
-                    null, fileName, true, _modpackManager, isExternal: true);
+                var isDll = mod.Location.EndsWith(".dll", StringComparison.OrdinalIgnoreCase);
+                var fileName = isDll ? Path.GetFileName(mod.Location) : string.Empty;
+                if (isDll && (knownDllFileNames.Contains(fileName) || IsSystemDll(fileName)))
+                    continue;
+
+                var kindLabel = mod.Kind switch
+                {
+                    Menace.Modkit.ModManagement.ModKind.Modpack => "Installed modpack",
+                    Menace.Modkit.ModManagement.ModKind.Jiangyu => "Jiangyu mod",
+                    Menace.Modkit.ModManagement.ModKind.Leader => "CustomLeader leader pack",
+                    _ => "MelonLoader mod",
+                };
+
+                var vm = new ModpackItemViewModel(mod.DisplayName, mod.Author, mod.VersionDisplay,
+                    kindLabel, null, fileName, true, _modpackManager, isExternal: true);
+                if (mod.LoadOrder is { } order)
+                    vm.LoadOrder = order; // synthetic manifest: no SaveMetadata side-effect
 
                 // Check for known-conflicting mods
                 foreach (var (substring, warning) in ConflictingMods)
                 {
-                    if (fileName.Contains(substring, StringComparison.OrdinalIgnoreCase))
+                    if (isDll && fileName.Contains(substring, StringComparison.OrdinalIgnoreCase))
                     {
                         vm.ConflictWarning = warning;
                         break;
@@ -234,7 +295,12 @@ public sealed class ModpacksViewModel : ViewModelBase
                 AllModpacks.Add(vm);
             }
         }
+        catch (Exception ex)
+        {
+            ModkitLog.Warn($"[ModpacksViewModel] Installed-mods scan failed: {ex.Message}");
+        }
 
+        RebuildListRows();
         this.RaisePropertyChanged(nameof(UpdateCount));
     }
 
@@ -294,6 +360,9 @@ public sealed class ModpacksViewModel : ViewModelBase
         var manifest = _modpackManager.CreateModpack(name, author, description);
         var vm = new ModpackItemViewModel(manifest, _modpackManager);
         AllModpacks.Add(vm);
+        // The ListBox binds to the sectioned ListRows, not AllModpacks — without a
+        // rebuild the new modpack is invisible.
+        RebuildListRows();
         SelectedModpack = vm;
     }
 
@@ -402,6 +471,9 @@ public sealed class ModpacksViewModel : ViewModelBase
         if (_modpackManager.DeleteStagingModpack(dirName))
         {
             AllModpacks.Remove(SelectedModpack);
+            // The ListBox binds to the sectioned ListRows, not AllModpacks — without a
+            // rebuild the deleted modpack stays visible (and deployable).
+            RebuildListRows();
             SelectedModpack = AllModpacks.FirstOrDefault();
             DeployStatus = $"Deleted: {name}";
             LoadOrderVM.Refresh();
@@ -598,7 +670,7 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     public void MoveItemUp(ModpackItemViewModel? item)
     {
-        if (item == null) return;
+        if (item == null || item.IsStandalone) return; // only staging modpacks reorder
         var index = AllModpacks.IndexOf(item);
         if (index <= 0) return;
         AllModpacks.Move(index, index - 1);
@@ -608,7 +680,7 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     public void MoveItemDown(ModpackItemViewModel? item)
     {
-        if (item == null) return;
+        if (item == null || item.IsStandalone) return; // only staging modpacks reorder
         var index = AllModpacks.IndexOf(item);
         if (index < 0 || index >= AllModpacks.Count - 1) return;
         AllModpacks.Move(index, index + 1);
@@ -618,6 +690,7 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     public void MoveItem(ModpackItemViewModel item, int targetIndex)
     {
+        if (item.IsStandalone) return; // only staging modpacks reorder
         var currentIndex = AllModpacks.IndexOf(item);
         if (currentIndex < 0 || targetIndex < 0 || targetIndex >= AllModpacks.Count || currentIndex == targetIndex)
             return;
@@ -628,11 +701,14 @@ public sealed class ModpacksViewModel : ViewModelBase
 
     private void ReassignLoadOrders()
     {
-        for (int i = 0; i < AllModpacks.Count; i++)
+        var order = 10;
+        foreach (var vm in AllModpacks.Where(m => !m.IsStandalone))
         {
-            AllModpacks[i].LoadOrder = (i + 1) * 10;
+            vm.LoadOrder = order;
+            order += 10;
         }
         LoadOrderVM.Refresh();
+        RebuildListRows();
     }
 
     public void RefreshModpacks()
@@ -1110,3 +1186,6 @@ public class AssetPatchEntry
     public string DisplayName => System.IO.Path.GetFileName(RelativePath);
     public string PathSummary => RelativePath;
 }
+
+/// <summary>A section header row in the sectioned modpack list.</summary>
+public sealed record ModListSection(string Title, int Count);

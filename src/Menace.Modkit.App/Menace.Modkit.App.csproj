@@ -40,6 +40,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Menace.Modkit.Core\Menace.Modkit.Core.csproj" />
+    <ProjectReference Include="..\Menace.Modkit.ModManagement\Menace.Modkit.ModManagement.csproj" />
   </ItemGroup>
 
   <!-- Generate version from versions.json at build time -->

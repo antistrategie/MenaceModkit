@@ -1,5 +1,11 @@
 # ModpackLoader Implementation
 
+> [!IMPORTANT]
+> **Superseded in v37 (2026-07).** The `BundleCompiler` "merge patches → UnityFS bundle"
+> bake step shown below no longer exists. Modpacks deploy as loose files; the runtime
+> loader applies patches and clones and loads loose bundles from `Mods/` — game files are
+> never patched.
+
 Architecture and internals of the Menace modpack loading system.
 
 ## Overview

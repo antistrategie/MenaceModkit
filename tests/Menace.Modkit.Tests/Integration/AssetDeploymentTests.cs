@@ -103,26 +103,6 @@ public class AssetDeploymentTests : IDisposable
     }
 
     /// <summary>
-    /// Use REPL to check CompiledAssetLoader status.
-    /// </summary>
-    [Fact]
-    public async Task CompiledAssets_AreLoaded()
-    {
-        var response = await _gameClient.GetAsync(
-            "/repl?code=" + Uri.EscapeDataString(
-                "return new { " +
-                "HasManifest = Menace.ModpackLoader.CompiledAssetLoader.HasManifest, " +
-                "ManifestCount = Menace.ModpackLoader.CompiledAssetLoader.ManifestAssetCount, " +
-                "LoadedCount = Menace.ModpackLoader.CompiledAssetLoader.LoadedAssetCount " +
-                "};"));
-
-        var json = await response.Content.ReadAsStringAsync();
-        _output.WriteLine($"CompiledAssetLoader status: {json}");
-
-        Assert.True(response.IsSuccessStatusCode);
-    }
-
-    /// <summary>
     /// Use REPL to spawn an entity and verify it has expected properties.
     /// </summary>
     [Theory]
@@ -168,42 +148,5 @@ return new {{ found = true, id = ""{templateId}"", field = ""{fieldPath}"", valu
             var errorList = errors.EnumerateArray().ToList();
             Assert.Empty(errorList); // No errors expected
         }
-    }
-}
-
-/// <summary>
-/// Tests for the BundleCompiler that can run without the game.
-/// Uses real asset bytes extracted from the game.
-/// </summary>
-[Trait("Category", "Offline")]
-public class BundleCompilerOfflineTests
-{
-    private readonly ITestOutputHelper _output;
-
-    // Path to extracted game data for testing
-    // Set via environment variable or test configuration
-    private static readonly string? GameDataPath =
-        Environment.GetEnvironmentVariable("MENACE_GAME_DATA");
-
-    public BundleCompilerOfflineTests(ITestOutputHelper output)
-    {
-        _output = output;
-    }
-
-    /// <summary>
-    /// Test FindTemplateId against real game assets.
-    /// Requires MENACE_GAME_DATA environment variable to be set.
-    /// </summary>
-    [SkippableFact]
-    public void FindTemplateId_WithRealAssets()
-    {
-        Skip.If(string.IsNullOrEmpty(GameDataPath), "MENACE_GAME_DATA not set");
-
-        var resourcesPath = Path.Combine(GameDataPath, "resources.assets");
-        Skip.If(!File.Exists(resourcesPath), $"resources.assets not found at {resourcesPath}");
-
-        // This would load the actual assets and test FindTemplateId
-        // Implementation depends on AssetsTools.NET
-        _output.WriteLine($"Would test with: {resourcesPath}");
     }
 }

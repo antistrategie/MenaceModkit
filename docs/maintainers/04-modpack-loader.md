@@ -98,11 +98,15 @@ Mods/
 │  ├─ clones/             # Clone JSON files (per-type)
 │  ├─ assets/             # Disk asset files (PNG, WAV)
 │  ├─ dlls/               # Plugin DLL files
-│  ├─ bundles/            # Asset bundles
+│  ├─ bundles/            # Asset bundles (loaded loose at runtime)
 │  ├─ models/             # GLB model files
 │  └─ scripts/            # Lua scripts
-└─ compiled/              # Pre-compiled bundles from bundler
 ```
+
+> [!NOTE]
+> **v37 (2026-07):** the old top-level `Mods/compiled/` directory (pre-baked bundles from
+> the removed bundler) is gone. Bundles are loaded loose from each modpack's `bundles/`
+> folder; the loader no longer reads a `compiled/` path.
 
 ### Modpack Manifest (V2)
 
@@ -196,7 +200,7 @@ Replacement strategies:
 - Meshes: Full reconstruction
 - Prefabs: Recursive component/hierarchy copying
 
-**Note:** Runtime replacement DISABLED (`DISABLE_RUNTIME_REPLACEMENT = true`). Assets come from compiled bundles.
+**Note (v37):** Runtime replacement is **enabled** (`DISABLE_RUNTIME_REPLACEMENT = false`) — it is now the only path. Assets are loaded loose from each modpack's `bundles/`/`assets/` folders (via `BundleLoader`) and applied at runtime; there are no pre-compiled bundles.
 
 ### GLB/GLTF Model Loading
 
@@ -221,19 +225,17 @@ Discovery:
 
 ## TODOs and Known Issues
 
-### Disabled Features (Intentional)
+### Runtime paths (now the only paths, v37)
 
-1. **Runtime Asset Replacement** (AssetReplacer.cs:31)
-   ```csharp
-   private const bool DISABLE_RUNTIME_REPLACEMENT = true;
-   ```
-   Expects compiled bundles from Phase 5 builder.
+The bake pipeline is gone, so the two flags that used to disable the runtime paths in
+favour of pre-compiled bundles are now permanently **off** — these are the live code:
 
-2. **Runtime Template Cloning** (TemplateCloning.cs:22)
-   ```csharp
-   private const bool DISABLE_RUNTIME_CLONING = true;
-   ```
-   Expects native clones in compiled bundles.
+1. **Runtime Asset Replacement** (`AssetReplacer.cs`) — `DISABLE_RUNTIME_REPLACEMENT = false`.
+   Loose bundles/assets are applied at runtime by `BundleLoader`.
+2. **Runtime Template Cloning** (`TemplateCloning.cs:22`) — `DISABLE_RUNTIME_CLONING = false`.
+   Clones are Instantiated, deep-copied (`TemplateCloneDeepCopy`) and registered into
+   `DataTemplateLoader` (`TemplateRegistration`) at runtime; there are no native clones in
+   pre-built bundles.
 
 ### Potential Issues
 
@@ -245,15 +247,14 @@ Discovery:
    - Old approach modified shared instances, causing corruption
    - Fixed: `CreateLocalizedObject()` creates fresh instances
 
-3. **IL2CPP Type Resolution Fragility** (TemplateCloning.cs:262-341)
-   - Uses multiple fallback strategies for field name patterns
-   - Brittle if field names change between game versions
+3. **IL2CPP Type Resolution Fragility** (TemplateCloning / TemplateRegistration)
+   - Native fields are surfaced as properties on IL2CPP proxy types; registration works
+     through the typed interop dictionaries rather than guessed field names
+   - Still version-sensitive if the game renames the underlying members
 
-4. **Black Market Pool Injection Offset** (EarlyTemplateInjection.cs:45)
-   ```csharp
-   private const int OFFSET_BLACKMARKET_MAX_QUANTITY = 0xAC;
-   ```
-   Magic offset - will break if field layout changes.
+4. **Black Market Pool** — the former magic `0xAC` max-quantity offset has been removed.
+   Clones are mirrored into every ancestor `DataTemplateLoader` slot, so the market's
+   `GetAll<BaseItemTemplate>()` enumeration sees them natively (no offset poking).
 
 ## Dependencies
 
@@ -290,6 +291,8 @@ Discovery:
 
 1. **IL2CPP Fragility** - All hardcoded offsets will break if game internals change
 2. **Load Order Critical** - Patches, clones, assets must apply in correct sequence
-3. **Asset Bundle Expectation** - Production expects Phase 5 compiler bundles
+3. **Loose-file deploy (v37)** - Modpacks deploy as loose files; the loader applies
+   patches/clones and loads loose bundles from `Mods/` at runtime. There is no bake step
+   and no pre-compiled-bundle expectation.
 4. **Event Hook Integration** - Patches extend game event systems for Lua/C# scripting
 5. **Save Compatibility** - ModRegistry tracks which mods were active for saves

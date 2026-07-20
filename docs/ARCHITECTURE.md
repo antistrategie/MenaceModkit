@@ -1,5 +1,14 @@
 # Architecture
 
+> [!IMPORTANT]
+> **Superseded in v37 (2026-07).** The asset-bundle **bake** subsystem described below —
+> `BundleCompiler`, `TextureBundler`, `UnityBinaryPatcher`, and the `resources.assets`
+> patch/restore machinery — has been removed. Deploys are now **loose files only**: the
+> Modkit copies a modpack into `Mods/` and the runtime `ModpackLoader` applies template
+> patches, registers clones and loads loose asset bundles from `Mods/` alone. No game
+> files are ever modified. Sections that reference `BundleCompiler` or baking into
+> `resources.assets` are retained for historical context but no longer reflect the code.
+
 This document covers the technical architecture of the Menace Modkit — a modding toolkit for Unity IL2CPP games.
 
 ## System Overview
