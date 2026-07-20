@@ -23,6 +23,14 @@ public class DeployManager
 {
     private readonly ModpackManager _modpackManager;
     private readonly Menace.Modkit.ModManagement.ModDeployService _deployService = new();
+
+    /// <summary>
+    /// Provenance value stamped into each deployed modpack's runtime manifest
+    /// (<c>deployedBy</c>). Ownership is read back from the file system, so cleanup of
+    /// retired modpacks is stateless and never touches mods installed by other tools.
+    /// </summary>
+    internal const string DeployedByMarker = "modkit";
+
     private string DeployStateFilePath =>
         Path.Combine(Path.GetDirectoryName(_modpackManager.StagingBasePath)!, "deploy-state.json");
 
@@ -53,7 +61,7 @@ public class DeployManager
 
             // Always recompile when sources exist — the Modkit is the authoring tool and
             // the author may have just edited the code.
-            await _deployService.DeployAsync(modpack.Path, progress, ct, forceCompile: true);
+            await _deployService.DeployAsync(modpack.Path, progress, ct, forceCompile: true, deployedBy: DeployedByMarker);
 
             ModkitLog.Info($"Deployed {modpack.Name} to {modsBasePath}");
             progress?.Report($"Deployed {modpack.Name}");
@@ -98,16 +106,22 @@ public class DeployManager
 
         try
         {
-            // Remove modpacks that were deployed previously but are no longer in staging.
+            // Remove modkit-deployed modpacks that are no longer in staging. Ownership
+            // comes from the deployedBy marker in each dir's runtime manifest (stateless);
+            // the previous deploy-state record covers dirs deployed before the marker
+            // existed. Mods installed by other tools or by hand are never touched.
             var currentModpackNames = new HashSet<string>(modpacks.Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
-            foreach (var oldModpack in previousState.DeployedModpacks)
+            var retired = FindOwnedModpackDirs(modsBasePath)
+                .Concat(previousState.DeployedModpacks
+                    .Where(mp => !string.IsNullOrWhiteSpace(mp.Name))
+                    .Select(mp => Path.Combine(modsBasePath, mp.Name)))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(dir => !currentModpackNames.Contains(Path.GetFileName(dir)));
+            foreach (var dir in retired)
             {
-                if (string.IsNullOrWhiteSpace(oldModpack.Name) || currentModpackNames.Contains(oldModpack.Name))
-                    continue;
-                var dir = Path.Combine(modsBasePath, oldModpack.Name);
                 if (Path.GetFullPath(dir) == Path.GetFullPath(modsBasePath) || !Directory.Exists(dir))
                     continue;
-                ModkitLog.Info($"[DeployManager] Modpack '{oldModpack.Name}' no longer in staging, removing");
+                ModkitLog.Info($"[DeployManager] Modpack '{Path.GetFileName(dir)}' no longer in staging, removing");
                 Directory.Delete(dir, true);
             }
 
@@ -122,7 +136,7 @@ public class DeployManager
                 ct.ThrowIfCancellationRequested();
                 var modpack = modpacks[i];
                 progress?.Report($"Deploying {modpack.Name} ({i + 1}/{total})...");
-                await _deployService.DeployAsync(modpack.Path, progress, ct, forceCompile: true);
+                await _deployService.DeployAsync(modpack.Path, progress, ct, forceCompile: true, deployedBy: DeployedByMarker);
 
                 deployedModpacks.Add(new DeployedModpack
                 {
@@ -222,18 +236,17 @@ public class DeployManager
 
             await Task.Run(() =>
             {
-                // Remove deployed modpack directories
-                foreach (var mp in state.DeployedModpacks)
+                // Remove modkit-deployed modpack directories: everything carrying our
+                // deployedBy marker (stateless scan), plus anything the deploy-state
+                // record still tracks from before the marker existed.
+                var toRemove = FindOwnedModpackDirs(modsBasePath)
+                    .Concat(state.DeployedModpacks
+                        .Where(mp => !string.IsNullOrWhiteSpace(mp.Name))
+                        .Select(mp => Path.Combine(modsBasePath, mp.Name)))
+                    .Distinct(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var dir in toRemove)
                 {
-                    // Skip empty/invalid names to avoid deleting Mods folder itself
-                    if (string.IsNullOrWhiteSpace(mp.Name))
-                    {
-                        ModkitLog.Warn($"[DeployManager] Skipping invalid modpack with empty name");
-                        continue;
-                    }
-
-                    var dir = Path.Combine(modsBasePath, mp.Name);
-
                     // Safety: never delete the Mods folder itself
                     if (Path.GetFullPath(dir) == Path.GetFullPath(modsBasePath))
                     {
@@ -243,7 +256,7 @@ public class DeployManager
 
                     if (Directory.Exists(dir))
                     {
-                        ModkitLog.Info($"[DeployManager] Removing modpack directory: {mp.Name}");
+                        ModkitLog.Info($"[DeployManager] Removing modpack directory: {Path.GetFileName(dir)}");
                         Directory.Delete(dir, true);
                     }
                 }
@@ -732,6 +745,42 @@ public class DeployManager
         ".git",     // Git repository data
         ".vs",      // Visual Studio data
     };
+
+    /// <summary>
+    /// Scan <c>Mods/</c> for modpack directories whose runtime manifest carries our
+    /// <see cref="DeployedByMarker"/> — the stateless record of what the modkit deployed.
+    /// Unreadable manifests are treated as not ours (never delete what we can't identify).
+    /// </summary>
+    private static List<string> FindOwnedModpackDirs(string modsBasePath)
+    {
+        var owned = new List<string>();
+        if (!Directory.Exists(modsBasePath))
+            return owned;
+
+        foreach (var dir in Directory.GetDirectories(modsBasePath))
+        {
+            var manifestPath = Path.Combine(dir, "modpack.json");
+            if (!File.Exists(manifestPath))
+                continue;
+
+            try
+            {
+                using var doc = JsonDocument.Parse(File.ReadAllText(manifestPath));
+                if (doc.RootElement.TryGetProperty("deployedBy", out var by) &&
+                    by.ValueKind == JsonValueKind.String &&
+                    string.Equals(by.GetString(), DeployedByMarker, StringComparison.OrdinalIgnoreCase))
+                {
+                    owned.Add(dir);
+                }
+            }
+            catch
+            {
+                // Malformed manifest — not provably ours, leave it alone.
+            }
+        }
+
+        return owned;
+    }
 
     /// <summary>
     /// Check if a modpack is a developer-only modpack that should be excluded

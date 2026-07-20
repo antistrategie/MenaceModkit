@@ -15,7 +15,7 @@ namespace Menace.Modkit.ModManagement;
 /// </summary>
 internal static class RuntimeManifestWriter
 {
-    public static void Write(string sourceDir, string deployDir)
+    public static void Write(string sourceDir, string deployDir, string? deployedBy = null)
     {
         var manifest = LoadManifest(sourceDir);
 
@@ -27,6 +27,12 @@ internal static class RuntimeManifestWriter
             ["author"] = manifest?.Author ?? "Unknown",
             ["loadOrder"] = manifest?.LoadOrder ?? 100,
         };
+
+        // Provenance marker: which tool deployed this folder. Lets a deployer clean up
+        // its own retired modpacks by scanning Mods/ (stateless) without ever touching
+        // mods installed by another tool or by hand.
+        if (!string.IsNullOrEmpty(deployedBy))
+            runtimeObj["deployedBy"] = deployedBy;
 
         // Template overrides from stats/*.json → "patches" (+ legacy "templates").
         var patches = new JsonObject();

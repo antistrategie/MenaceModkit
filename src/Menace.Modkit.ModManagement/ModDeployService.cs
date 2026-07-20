@@ -36,7 +36,7 @@ public sealed class ModDeployService
     /// authoring tools where the sources are the truth; installers of distributed mods leave
     /// it off so a shipped DLL is never rebuilt against missing references.
     /// </summary>
-    public async Task<string> DeployAsync(string sourceDir, IProgress<string>? progress = null, CancellationToken ct = default, bool forceCompile = false)
+    public async Task<string> DeployAsync(string sourceDir, IProgress<string>? progress = null, CancellationToken ct = default, bool forceCompile = false, string? deployedBy = null)
     {
         var modsPath = ModsPath ?? throw new InvalidOperationException("Game install path is not set.");
         if (!Directory.Exists(sourceDir))
@@ -89,7 +89,7 @@ public sealed class ModDeployService
         AssembleDlls(sourceDir, manifest, target);
 
         // 5. Write the runtime modpack.json (stats/*.json + clones/*.json merged in).
-        RuntimeManifestWriter.Write(sourceDir, target);
+        RuntimeManifestWriter.Write(sourceDir, target, deployedBy);
 
         progress?.Report($"Deployed {name}");
         return target;

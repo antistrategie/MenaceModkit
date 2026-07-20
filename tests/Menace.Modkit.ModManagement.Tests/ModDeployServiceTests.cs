@@ -132,6 +132,28 @@ public sealed class ModDeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Deploy_StampsDeployedByMarker_WhenRequested()
+    {
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Marked"",""version"":""1.0.0""}");
+
+        var target = await new ModDeployService(_config).DeployAsync(_sourceDir, deployedBy: "modkit");
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(target, "modpack.json")));
+        Assert.Equal("modkit", doc.RootElement.GetProperty("deployedBy").GetString());
+    }
+
+    [Fact]
+    public async Task Deploy_OmitsDeployedByMarker_ByDefault()
+    {
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Unmarked"",""version"":""1.0.0""}");
+
+        var target = await new ModDeployService(_config).DeployAsync(_sourceDir);
+
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(target, "modpack.json")));
+        Assert.False(doc.RootElement.TryGetProperty("deployedBy", out _));
+    }
+
+    [Fact]
     public async Task Deploy_ReplacesExistingInstall()
     {
         WriteManifest(@"{""manifestVersion"":2,""name"":""Dup"",""version"":""1.0.0""}");

@@ -379,7 +379,7 @@ public sealed class MainViewModel : ReactiveObject
     {
         // A modpack goes through deploy (which compiles only if needed); anything else is a copy.
         if (System.IO.File.Exists(System.IO.Path.Combine(modDir, "modpack.json")))
-            await _deployService.DeployAsync(modDir, progress);
+            await _deployService.DeployAsync(modDir, progress, deployedBy: "standalone");
         else
             _installService.InstallFrom(modDir, name);
     }
