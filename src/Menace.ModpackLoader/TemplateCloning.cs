@@ -120,6 +120,11 @@ public partial class ModpackLoaderMod
                         // Set m_ID on the DataTemplate base class via IL2CPP field write
                         SetTemplateId(clone, newName);
 
+                        // Instantiate shallow-copies collection containers and owned
+                        // sub-objects; break the sharing so patches applied through the
+                        // clone can't leak into the source template's live data.
+                        TemplateCloneDeepCopy.Run(clone, templateType, newName);
+
                         // Register in DataTemplateLoader's internal dictionaries
                         RegisterInLoader(clone, templateType, newName);
 
