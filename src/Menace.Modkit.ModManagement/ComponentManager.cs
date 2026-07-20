@@ -28,7 +28,7 @@ public sealed class ComponentManager : IDisposable
     /// <summary>
     /// Base URL for component downloads from the repo.
     /// </summary>
-    private const string GitHubRawBaseUrl = "https://raw.githubusercontent.com/p0ss/MenaceAssetPacker/main/third_party/components";
+    private const string GitHubRawBaseUrl = "https://raw.githubusercontent.com/antistrategie/MenaceModkit/main/third_party/components";
 
     private readonly string _componentsCachePath;
     private readonly string _platform;
@@ -819,7 +819,7 @@ public sealed class ComponentManager : IDisposable
     private string GetManifestUrlForChannel()
     {
         var channel = ModkitConfig.Current.UpdateChannel;
-        const string baseUrl = "https://raw.githubusercontent.com/p0ss/MenaceAssetPacker/main/third_party";
+        const string baseUrl = "https://raw.githubusercontent.com/antistrategie/MenaceModkit/main/third_party";
 
         return channel == "beta"
             ? $"{baseUrl}/versions-beta.json"
@@ -951,7 +951,7 @@ public sealed class ComponentManager : IDisposable
         if (componentName == "Modkit")
         {
             var ext = _platform == "win-x64" ? "zip" : "tar.gz";
-            var url = $"https://github.com/p0ss/MenaceAssetPacker/releases/download/v{component.Version}/menace-modkit-{_platform}.{ext}";
+            var url = $"https://github.com/antistrategie/MenaceModkit/releases/download/v{component.Version}/menace-modkit-{_platform}.{ext}";
             return new DownloadInfo
             {
                 Url = url,
