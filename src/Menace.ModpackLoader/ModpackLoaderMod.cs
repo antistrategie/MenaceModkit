@@ -169,7 +169,6 @@ public partial class ModpackLoaderMod : MelonMod
         PlayerLog($"Bundles: {BundleLoader.LoadedBundleCount} ({BundleLoader.LoadedAssetCount} assets)");
         PlayerLog($"Asset replacements registered: {AssetReplacer.RegisteredCount}");
         PlayerLog($"Custom sprites loaded: {AssetReplacer.CustomSpriteCount}");
-        PlayerLog($"Compiled assets in manifest: {CompiledAssetLoader.ManifestAssetCount}");
         PlayerLog($"Mod DLLs: {DllLoader.GetLoadedAssemblies().Count}");
         var pluginSummary = DllLoader.GetPluginSummary();
         if (pluginSummary != null)
@@ -255,10 +254,6 @@ public partial class ModpackLoaderMod : MelonMod
 
         // Initialize save system watcher (tries to find saves folder)
         SaveSystemPatches.TryInitialize();
-
-        // Load compiled assets now that Unity is ready
-        // (manifest was loaded during init, actual Resources.Load happens here)
-        CompiledAssetLoader.LoadAssets();
 
         // Load any pending custom sprites asynchronously to avoid stutter
         // This spreads the work across multiple frames (5 sprites per frame by default)
@@ -479,13 +474,6 @@ public partial class ModpackLoaderMod : MelonMod
 
         SdkLogger.Msg($"Loaded {_loadedModpacks.Count} modpack(s)");
 
-        // Load compiled asset manifest (actual asset loading deferred until Unity is ready)
-        // Assets are embedded in resources.assets and registered with ResourceManager.
-        var compiledDir = Path.Combine(modsPath, "compiled");
-        if (Directory.Exists(compiledDir))
-        {
-            CompiledAssetLoader.LoadManifest(compiledDir);
-        }
     }
 
     /// <summary>
@@ -706,10 +694,6 @@ public partial class ModpackLoaderMod : MelonMod
             SdkLogger.Msg("No modpacks to apply");
             return true;
         }
-
-        // First, register any bundle-loaded clone templates with DataTemplateLoader
-        // This handles clones that were compiled into the templates.bundle
-        RegisterBundleClones();
 
         var allSucceeded = true;
 

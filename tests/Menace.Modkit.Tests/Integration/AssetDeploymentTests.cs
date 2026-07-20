@@ -103,26 +103,6 @@ public class AssetDeploymentTests : IDisposable
     }
 
     /// <summary>
-    /// Use REPL to check CompiledAssetLoader status.
-    /// </summary>
-    [Fact]
-    public async Task CompiledAssets_AreLoaded()
-    {
-        var response = await _gameClient.GetAsync(
-            "/repl?code=" + Uri.EscapeDataString(
-                "return new { " +
-                "HasManifest = Menace.ModpackLoader.CompiledAssetLoader.HasManifest, " +
-                "ManifestCount = Menace.ModpackLoader.CompiledAssetLoader.ManifestAssetCount, " +
-                "LoadedCount = Menace.ModpackLoader.CompiledAssetLoader.LoadedAssetCount " +
-                "};"));
-
-        var json = await response.Content.ReadAsStringAsync();
-        _output.WriteLine($"CompiledAssetLoader status: {json}");
-
-        Assert.True(response.IsSuccessStatusCode);
-    }
-
-    /// <summary>
     /// Use REPL to spawn an entity and verify it has expected properties.
     /// </summary>
     [Theory]

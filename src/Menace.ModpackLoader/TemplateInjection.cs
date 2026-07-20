@@ -45,8 +45,6 @@ public partial class ModpackLoaderMod
     private readonly Dictionary<Type, Dictionary<string, UnityEngine.Object>> _nameLookupCache = new();
 
     // Keep runtime-created sprites and textures alive to prevent garbage collection
-    private readonly List<Sprite> _runtimeSprites = new();
-    private readonly List<Texture2D> _runtimeTextures = new();
 
     /// <summary>
     /// Clear the name lookup cache. Call this after creating clones so that
@@ -542,8 +540,8 @@ public partial class ModpackLoaderMod
                 var addedCount = 0;
                 foreach (var typeName in typeNamesToTry)
                 {
-                    // Check compiled assets (loaded from manifest via Resources.Load)
-                    var compiledAssets = CompiledAssetLoader.GetAssetsByType(typeName);
+                    // Check bundle-loaded assets from deployed modpacks
+                    var compiledAssets = BundleLoader.GetAssetsByType(typeName);
                     foreach (var asset in compiledAssets)
                     {
                         if (asset != null && !string.IsNullOrEmpty(asset.name) && !lookup.ContainsKey(asset.name))
@@ -556,74 +554,6 @@ public partial class ModpackLoaderMod
                 if (addedCount > 0)
                     SdkLogger.Msg($"    Added {addedCount} custom {simpleTypeName}(s) to lookup");
 
-                // For Sprites: create runtime sprites from PNG files in compiled/textures
-                // Asset-file sprites have complex vertex/UV data that's hard to generate correctly,
-                // and asset-file textures have ColorSpace issues (always washed out)
-                // Runtime loading via ImageConversion.LoadImage works correctly for both
-                if (elementType == typeof(Sprite))
-                {
-                    int runtimeSpriteCount = 0;
-
-                    // Scan compiled/textures directory for PNG files
-                    var modsPath = Path.Combine(Directory.GetCurrentDirectory(), "Mods");
-                    var texturesDir = Path.Combine(modsPath, "compiled", "textures");
-
-                    if (Directory.Exists(texturesDir))
-                    {
-                        var pngFiles = Directory.GetFiles(texturesDir, "*.png");
-                        SdkLogger.Msg($"    Found {pngFiles.Length} PNG file(s) in compiled/textures");
-
-                        foreach (var pngPath in pngFiles)
-                        {
-                            var textureName = Path.GetFileNameWithoutExtension(pngPath);
-
-                            // Skip if we already have a sprite for this texture
-                            if (lookup.ContainsKey(textureName)) continue;
-
-                            try
-                            {
-                                // Load PNG file as Texture2D using ImageConversion
-                                var bytes = File.ReadAllBytes(pngPath);
-                                var tex = new Texture2D(2, 2);
-                                var il2cppBytes = new Il2CppStructArray<byte>(bytes);
-
-                                if (ImageConversion.LoadImage(tex, il2cppBytes))
-                                {
-                                    tex.name = textureName;
-
-                                    // Create a runtime sprite from the texture
-                                    var rect = new Rect(0, 0, tex.width, tex.height);
-                                    var pivot = new Vector2(0.5f, 0.5f);
-                                    var sprite = Sprite.Create(tex, rect, pivot, 100f);
-
-                                    if (sprite != null)
-                                    {
-                                        sprite.name = textureName;
-                                        lookup[textureName] = sprite;
-
-                                        // Cache to prevent garbage collection
-                                        _runtimeSprites.Add(sprite);
-                                        _runtimeTextures.Add(tex);
-                                        runtimeSpriteCount++;
-
-                                        SdkLogger.Msg($"      Loaded sprite: '{textureName}' ({tex.width}x{tex.height})");
-                                    }
-                                }
-                                else
-                                {
-                                    SdkLogger.Warning($"    Failed to load texture from '{pngPath}'");
-                                }
-                            }
-                            catch (Exception ex)
-                            {
-                                SdkLogger.Warning($"    Failed to create sprite for '{textureName}': {ex.Message}");
-                            }
-                        }
-                    }
-
-                    if (runtimeSpriteCount > 0)
-                        SdkLogger.Msg($"    Created {runtimeSpriteCount} sprite(s) from PNG files");
-                }
             }
             catch (Exception ex)
             {
