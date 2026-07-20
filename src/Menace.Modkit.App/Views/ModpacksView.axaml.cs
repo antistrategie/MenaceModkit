@@ -240,6 +240,12 @@ public class ModpacksView : UserControl
     outerGrid.Children.Add(deployedIndicator);
     Grid.SetColumn(deployedIndicator, 0);
 
+    // Ordering is a modpack concept: staging modpacks reorder (arrows/grip);
+    // installed modpacks show their mod-owned number read-only; other kinds
+    // (Jiangyu, leader packs, raw DLLs, bundled dev mods) have no order at all.
+    var reorderable = !modpack.IsStandalone;
+    var showsOrder = reorderable || modpack.Description == "Installed modpack";
+
     // Content: [checkbox] [info...] [arrows] [order#] [grip]
     var contentGrid = new Grid
     {
@@ -513,8 +519,11 @@ public class ModpacksView : UserControl
     };
     arrowStack.Children.Add(downArrow);
 
-    contentGrid.Children.Add(arrowStack);
-    Grid.SetColumn(arrowStack, 2);
+    if (reorderable)
+    {
+      contentGrid.Children.Add(arrowStack);
+      Grid.SetColumn(arrowStack, 2);
+    }
 
     // Col 3: Load order number (hidden in compact mode < 220px)
     var orderText = new TextBlock
@@ -538,8 +547,11 @@ public class ModpacksView : UserControl
           Converter = new FuncValueConverter<double, bool>(w => w >= CompactWidthThreshold)
         });
     }
-    contentGrid.Children.Add(orderText);
-    Grid.SetColumn(orderText, 3);
+    if (showsOrder)
+    {
+      contentGrid.Children.Add(orderText);
+      Grid.SetColumn(orderText, 3);
+    }
 
     // Col 4: Drag grip — wide touch-friendly handle
     var gripArea = new Border
@@ -573,8 +585,11 @@ public class ModpacksView : UserControl
         _draggedModpackItem = null;
       }
     };
-    contentGrid.Children.Add(gripArea);
-    Grid.SetColumn(gripArea, 4);
+    if (reorderable)
+    {
+      contentGrid.Children.Add(gripArea);
+      Grid.SetColumn(gripArea, 4);
+    }
 
     outerGrid.Children.Add(contentGrid);
     Grid.SetColumn(contentGrid, 1);
