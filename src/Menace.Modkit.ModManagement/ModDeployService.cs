@@ -32,8 +32,11 @@ public sealed class ModDeployService
     /// <summary>
     /// Compile (if needed) and deploy a source modpack folder into <c>Mods/</c>, replacing any
     /// existing install of the same name. Returns the deployed path. Throws on compile failure.
+    /// <paramref name="forceCompile"/> recompiles even when a built DLL already exists — for
+    /// authoring tools where the sources are the truth; installers of distributed mods leave
+    /// it off so a shipped DLL is never rebuilt against missing references.
     /// </summary>
-    public async Task<string> DeployAsync(string sourceDir, IProgress<string>? progress = null, CancellationToken ct = default)
+    public async Task<string> DeployAsync(string sourceDir, IProgress<string>? progress = null, CancellationToken ct = default, bool forceCompile = false)
     {
         var modsPath = ModsPath ?? throw new InvalidOperationException("Game install path is not set.");
         if (!Directory.Exists(sourceDir))
@@ -52,7 +55,7 @@ public sealed class ModDeployService
         // 1. Compile the mod's C# source, but only if it has sources AND isn't already built
         //    (a distributed modpack may ship its compiled DLL, in which case a copy is enough
         //    and a recompile would just risk failing on missing references).
-        if (manifest.Code.HasAnySources && !HasBuiltOutput(sourceDir, manifest))
+        if (manifest.Code.HasAnySources && (forceCompile || !HasBuiltOutput(sourceDir, manifest)))
         {
             progress?.Report($"Compiling {name}…");
             var result = await _compiler.CompileModpackAsync(manifest, ct).ConfigureAwait(false);

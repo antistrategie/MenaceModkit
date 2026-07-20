@@ -9,19 +9,20 @@ using System.Text.Json.Nodes;
 using System.Threading;
 using System.Threading.Tasks;
 using Menace.Modkit.App.Models;
-using Menace.Modkit.Core.Bundles;
 
 namespace Menace.Modkit.App.Services;
 
 /// <summary>
-/// Owns the game's Mods/ folder. Handles full deploy/undeploy pipeline:
-/// resolve active modpacks in load order → merge data patches (last-wins) →
-/// copy assets → write merged runtime manifests → clean removed mods.
+/// Owns the game's Mods/ folder. Deploys are loose files only (shared ModDeployService:
+/// compile → copy → runtime manifest); the runtime loader applies patches, registers
+/// clones and loads loose assets, so no game files are ever patched. Undeploy retains a
+/// legacy restore of resources.assets/globalgamemanagers from .original backups left by
+/// older Modkit versions that baked into game files.
 /// </summary>
 public class DeployManager
 {
     private readonly ModpackManager _modpackManager;
-    private readonly CompilationService _compilationService = new();
+    private readonly Menace.Modkit.ModManagement.ModDeployService _deployService = new();
     private string DeployStateFilePath =>
         Path.Combine(Path.GetDirectoryName(_modpackManager.StagingBasePath)!, "deploy-state.json");
 
@@ -31,201 +32,10 @@ public class DeployManager
     }
 
     /// <summary>
-    /// Detect if the game has been updated and clean up stale files if needed.
-    /// Returns true if cleanup was performed (requires user to verify game files via Steam).
-    /// </summary>
-    private async Task<(bool CleanupPerformed, string? Message)> DetectAndHandleGameUpdate(string modsBasePath)
-    {
-        var gameInstallPath = _modpackManager.GetGameInstallPath();
-        if (string.IsNullOrEmpty(gameInstallPath))
-            return (false, null);
-
-        var gameDataDir = Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
-        if (string.IsNullOrEmpty(gameDataDir))
-            return (false, null);
-
-        // Try to read game version from globalgamemanagers
-        var currentVersion = await Task.Run(() => DetectGameVersion(gameInstallPath));
-        if (string.IsNullOrEmpty(currentVersion))
-            return (false, null);
-
-        var previousState = DeployState.LoadFrom(DeployStateFilePath);
-        var previousVersion = previousState.GameVersion;
-
-        // If no previous version stored, just record current version
-        if (string.IsNullOrEmpty(previousVersion))
-        {
-            ModkitLog.Info($"[DeployManager] Recording game version: {currentVersion}");
-            return (false, null);
-        }
-
-        // Check if version changed
-        if (currentVersion == previousVersion)
-            return (false, null);
-
-        // Game has been updated!
-        // The current game files are PATCHED with old version data - they may be incompatible.
-        // We RENAME (not delete) them so Steam verification sees them as missing and re-downloads.
-        // This way: recovery is possible if something goes wrong.
-        ModkitLog.Warn($"[DeployManager] Game update detected: {previousVersion} → {currentVersion}");
-        ModkitLog.Warn($"[DeployManager] Renaming stale patched files so Steam can restore vanilla versions...");
-
-        var filesToHandle = new[] { "resources.assets", "globalgamemanagers" };
-        var renamedFiles = new List<string>();
-        var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-
-        foreach (var fileName in filesToHandle)
-        {
-            var filePath = Path.Combine(gameDataDir, fileName);
-            var backupPath = Path.Combine(gameDataDir, fileName + ".original");
-            var stalePath = Path.Combine(gameDataDir, $"{fileName}.stale_{timestamp}");
-
-            // Rename the patched file (not delete) - Steam will re-download it
-            // The .stale file can be manually deleted later or recovered if needed
-            if (File.Exists(filePath))
-            {
-                try
-                {
-                    File.Move(filePath, stalePath);
-                    renamedFiles.Add(fileName);
-                    ModkitLog.Info($"[DeployManager] Renamed stale patched file: {fileName} → {fileName}.stale_{timestamp}");
-                }
-                catch (Exception ex)
-                {
-                    ModkitLog.Error($"[DeployManager] Failed to rename {fileName}: {ex.Message}");
-                }
-            }
-
-            // Delete the .original backup - it's from the old version
-            if (File.Exists(backupPath))
-            {
-                try
-                {
-                    File.Delete(backupPath);
-                    ModkitLog.Info($"[DeployManager] Deleted stale backup: {fileName}.original");
-                }
-                catch (Exception ex)
-                {
-                    ModkitLog.Error($"[DeployManager] Failed to delete {fileName}.original: {ex.Message}");
-                }
-            }
-        }
-
-        // Delete backup metadata since backups are now invalid
-        var metadataPath = Path.Combine(gameDataDir, "backup-metadata.json");
-        if (File.Exists(metadataPath))
-        {
-            try
-            {
-                File.Delete(metadataPath);
-                ModkitLog.Info($"[DeployManager] Deleted stale backup-metadata.json");
-            }
-            catch (Exception ex)
-            {
-                ModkitLog.Error($"[DeployManager] Failed to delete backup-metadata.json: {ex.Message}");
-            }
-        }
-
-        // Delete compiled mod assets (they may be incompatible with new version)
-        var compiledDir = Path.Combine(modsBasePath, "compiled");
-        if (Directory.Exists(compiledDir))
-        {
-            try
-            {
-                Directory.Delete(compiledDir, true);
-                ModkitLog.Info($"[DeployManager] Deleted compiled assets directory");
-            }
-            catch (Exception ex)
-            {
-                ModkitLog.Error($"[DeployManager] Failed to delete compiled directory: {ex.Message}");
-            }
-        }
-
-        // Clear the deploy state so next deploy starts fresh
-        var deployStatePath = DeployStateFilePath;
-        if (File.Exists(deployStatePath))
-        {
-            try
-            {
-                File.Delete(deployStatePath);
-                ModkitLog.Info($"[DeployManager] Cleared deploy state");
-            }
-            catch (Exception ex)
-            {
-                ModkitLog.Error($"[DeployManager] Failed to clear deploy state: {ex.Message}");
-            }
-        }
-
-        var renamedList = renamedFiles.Count > 0
-            ? $"Renamed {renamedFiles.Count} patched file(s) to .stale_* (recoverable if needed).\n\n"
-            : "";
-
-        var message = $"Game update detected ({previousVersion} → {currentVersion}).\n\n" +
-                     renamedList +
-                     $"ACTION REQUIRED:\n" +
-                     $"1. Verify game files via Steam to download updated vanilla files\n" +
-                     $"2. Then redeploy mods\n\n" +
-                     $"In Steam: Right-click game → Properties → Installed Files → Verify integrity\n\n" +
-                     $"Note: .stale_* files in the game data folder can be safely deleted after verification.";
-
-        return (true, message);
-    }
-
-    /// <summary>
-    /// Detect the game version by reading from globalgamemanagers or app info.
-    /// Returns null if detection fails.
-    /// </summary>
-    private static string? DetectGameVersion(string gameInstallPath)
-    {
-        // Try reading from globalgamemanagers
-        var dataDirs = Directory.GetDirectories(gameInstallPath, "*_Data");
-        foreach (var dataDir in dataDirs)
-        {
-            var ggmPath = Path.Combine(dataDir, "globalgamemanagers");
-            if (!File.Exists(ggmPath))
-                continue;
-
-            try
-            {
-                // Read the Unity version string from globalgamemanagers
-                // Format: offset 0x14 contains a null-terminated version string
-                using var fs = File.OpenRead(ggmPath);
-                using var reader = new BinaryReader(fs);
-
-                // Skip to version offset
-                fs.Seek(0x14, SeekOrigin.Begin);
-                var bytes = new List<byte>();
-                byte b;
-                while ((b = reader.ReadByte()) != 0 && bytes.Count < 50)
-                    bytes.Add(b);
-
-                var unityVersion = System.Text.Encoding.ASCII.GetString(bytes.ToArray());
-
-                // Also try to get game-specific version from nearby bytes
-                // For now, return Unity version + file size as a fingerprint
-                var fileSize = new FileInfo(ggmPath).Length;
-                return $"{unityVersion}_{fileSize}";
-            }
-            catch
-            {
-                // Fall back to file checksum if version reading fails
-                try
-                {
-                    var fileInfo = new FileInfo(ggmPath);
-                    return $"build_{fileInfo.Length}_{fileInfo.LastWriteTimeUtc:yyyyMMddHHmmss}";
-                }
-                catch
-                {
-                    continue;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /// <summary>
-    /// Deploy a single staging modpack to the game's Mods/ folder (with compilation).
+    /// Deploy one modpack loosely into <c>Mods/</c> via the shared <see cref="Menace.Modkit.ModManagement.ModDeployService"/>
+    /// (compile → copy tree → runtime manifest) — the same path the standalone manager uses.
+    /// No game files are touched: the runtime loader applies patches, registers clones and
+    /// loads loose assets from <c>Mods/</c> alone.
     /// </summary>
     public async Task<DeployResult> DeploySingleAsync(ModpackManifest modpack, IProgress<string>? progress = null, CancellationToken ct = default)
     {
@@ -233,75 +43,17 @@ public class DeployManager
         if (string.IsNullOrEmpty(modsBasePath))
             return new DeployResult { Success = false, Message = "Game install path not set" };
 
-        // Check for game updates and clean up stale files if needed
-        progress?.Report("Checking game version...");
-        var (cleanupPerformed, cleanupMessage) = await DetectAndHandleGameUpdate(modsBasePath);
-        if (cleanupPerformed)
-        {
-            return new DeployResult
-            {
-                Success = false,
-                Message = cleanupMessage ?? "Game update detected. Please verify game files via Steam before deploying mods."
-            };
-        }
-
         try
         {
-            // Refresh runtime DLLs from bundled directory to pick up latest builds
+            // Refresh runtime DLLs from the bundled directory, then deploy them first so
+            // ModpackLoader.dll is available as a compile reference.
             _modpackManager.RefreshRuntimeDlls();
-
-            // Deploy runtime DLLs first so ModpackLoader.dll is available as a reference
             progress?.Report("Deploying runtime DLLs...");
             await Task.Run(() => DeployRuntimeDlls(modsBasePath), ct);
 
-            // Compile source code if present
-            if (modpack.Code.HasAnySources)
-            {
-                progress?.Report($"Compiling {modpack.Name}...");
-                ModkitLog.Info($"Compiling {modpack.Name}: sources={string.Join(", ", modpack.Code.Sources)}, refs={string.Join(", ", modpack.Code.References)}");
-                var compileResult = await _compilationService.CompileModpackAsync(modpack, ct);
-                foreach (var diag in compileResult.Diagnostics)
-                    ModkitLog.Info($"  [{diag.Severity}] {diag.File}:{diag.Line} — {diag.Message}");
-                if (!compileResult.Success)
-                {
-                    // Include both errors and warnings - warnings often explain WHY errors occurred
-                    // (e.g., "Il2CppAssemblies not found" warning explains "UnityEngine not found" errors)
-                    var errors = string.Join("\n", compileResult.Diagnostics
-                        .Where(d => d.Severity == Models.DiagnosticSeverity.Error)
-                        .Select(d => $"{d.File}:{d.Line} — {d.Message}"));
-                    var warnings = compileResult.Diagnostics
-                        .Where(d => d.Severity == Models.DiagnosticSeverity.Warning)
-                        .Select(d => d.Message)
-                        .ToList();
-                    var msg = $"Compile failed for {modpack.Name}:\n{errors}";
-                    if (warnings.Count > 0)
-                        msg += $"\n\nPossible causes:\n• " + string.Join("\n• ", warnings);
-                    ModkitLog.Error(msg);
-                    return new DeployResult { Success = false, Message = msg };
-                }
-                ModkitLog.Info($"Compiled {modpack.Name} → {compileResult.OutputDllPath}");
-            }
-
-            progress?.Report($"Deploying {modpack.Name}...");
-            await Task.Run(() => DeployModpack(modpack, modsBasePath), ct);
-
-            // NOTE: No need to restore .original files here before compilation.
-            // BundleCompiler.CompileDataPatchBundleAsync already prefers .original backup files
-            // over potentially-modified live files.
-
-            // Compile merged bundle with all staging modpacks (not just this one)
-            // This ensures clones, patches, and audio work correctly
-            progress?.Report("Compiling asset bundles...");
-            var allModpacks = _modpackManager.GetStagingModpacks()
-                .Where(m => !IsDevOnlyModpack(m.Name) || AppSettings.Instance.EnableDeveloperTools)
-                .OrderBy(m => m.LoadOrder)
-                .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
-                .ToList();
-            await TryCompileBundleAsync(allModpacks, modsBasePath, ct);
-
-            // Deploy patched game data
-            progress?.Report("Deploying patched game data...");
-            await Task.Run(() => DeployPatchedGameData(modsBasePath), ct);
+            // Always recompile when sources exist — the Modkit is the authoring tool and
+            // the author may have just edited the code.
+            await _deployService.DeployAsync(modpack.Path, progress, ct, forceCompile: true);
 
             ModkitLog.Info($"Deployed {modpack.Name} to {modsBasePath}");
             progress?.Report($"Deployed {modpack.Name}");
@@ -317,11 +69,11 @@ public class DeployManager
             return new DeployResult { Success = false, Message = $"Deploy failed: {ex.Message}" };
         }
     }
-
     /// <summary>
-    /// Deploy all active staging modpacks to the game's Mods/ folder.
-    /// Uses transactional deployment: all files are staged first, then committed atomically.
-    /// On any failure, changes are rolled back to preserve the previous state.
+    /// Deploy all active staging modpacks loosely into <c>Mods/</c> (shared ModDeployService
+    /// per modpack, load order preserved), and remove previously-deployed modpacks that are
+    /// no longer in staging. <c>deploy-state.json</c> is kept as an informational record for
+    /// undeploy and install-health checks; the game's own files are never modified.
     /// </summary>
     public async Task<DeployResult> DeployAllAsync(IProgress<string>? progress = null, CancellationToken ct = default)
     {
@@ -329,138 +81,48 @@ public class DeployManager
         if (string.IsNullOrEmpty(modsBasePath))
             return new DeployResult { Success = false, Message = "Game install path not set" };
 
-        // Check for game updates and clean up stale files if needed
-        progress?.Report("Checking game version...");
-        var (cleanupPerformed, cleanupMessage) = await DetectAndHandleGameUpdate(modsBasePath);
-        if (cleanupPerformed)
-        {
-            // Game was updated - user needs to verify files via Steam first
-            return new DeployResult
-            {
-                Success = false,
-                Message = cleanupMessage ?? "Game update detected. Please verify game files via Steam before deploying mods."
-            };
-        }
-
-        // Get staging modpacks, ordered by load order, excluding dev-only unless enabled.
-        // Use DistinctBy on Name to avoid deploying duplicate modpacks if multiple
-        // staging directories have the same manifest Name.
+        // Staging modpacks in load order, dev-only excluded unless enabled, first
+        // occurrence wins on duplicate names.
         var seenNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var modpacks = _modpackManager.GetStagingModpacks()
             .Where(m => !IsDevOnlyModpack(m.Name) || AppSettings.Instance.EnableDeveloperTools)
             .OrderBy(m => m.LoadOrder)
             .ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase)
-            .Where(m => seenNames.Add(m.Name)) // Keep first occurrence only
+            .Where(m => seenNames.Add(m.Name))
             .ToList();
 
         if (modpacks.Count == 0)
             return new DeployResult { Success = false, Message = "No staging modpacks found" };
 
         var previousState = DeployState.LoadFrom(DeployStateFilePath);
-        var deployedFiles = new List<string>();
-        var deployedFileInfos = new List<DeployedFileInfo>();
-        var deployedModpacks = new List<DeployedModpack>();
-
-        // Determine game data directory for transactional game file patching
-        var gameInstallPath = _modpackManager.GetGameInstallPath();
-        var gameDataDir = string.IsNullOrEmpty(gameInstallPath)
-            ? null
-            : Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
-
-        // Create transaction for atomic deployment
-        using var transaction = new DeployTransaction(modsBasePath, gameDataDir);
 
         try
         {
-            // BEGIN TRANSACTION
-            progress?.Report("Beginning transactional deploy...");
-            transaction.Begin();
-            ModkitLog.Info("[DeployManager] Transaction started - all changes will be staged before commit");
-
-            // Clean up any .stale_* files from previous game updates (non-critical, best effort)
-            // These are old patched files that were renamed during a game version change
-            if (!string.IsNullOrEmpty(gameDataDir))
-            {
-                try
-                {
-                    var staleFiles = Directory.GetFiles(gameDataDir, "*.stale_*");
-                    foreach (var staleFile in staleFiles)
-                    {
-                        try
-                        {
-                            File.Delete(staleFile);
-                            ModkitLog.Info($"[DeployManager] Cleaned up stale file: {Path.GetFileName(staleFile)}");
-                        }
-                        catch { /* Best effort cleanup */ }
-                    }
-                }
-                catch { /* Ignore errors in stale cleanup */ }
-            }
-
-            // Step 0: Stage removal of modpacks that existed in previous deploy but aren't in current staging
-            // This replaces the old CleanPreviousDeployment which happened outside the transaction.
+            // Remove modpacks that were deployed previously but are no longer in staging.
             var currentModpackNames = new HashSet<string>(modpacks.Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
             foreach (var oldModpack in previousState.DeployedModpacks)
             {
-                if (string.IsNullOrWhiteSpace(oldModpack.Name))
+                if (string.IsNullOrWhiteSpace(oldModpack.Name) || currentModpackNames.Contains(oldModpack.Name))
                     continue;
-
-                if (!currentModpackNames.Contains(oldModpack.Name))
-                {
-                    ModkitLog.Info($"[DeployManager] Modpack '{oldModpack.Name}' no longer in staging, scheduling removal");
-                    transaction.StageDirectoryRemoval(oldModpack.Name);
-                }
+                var dir = Path.Combine(modsBasePath, oldModpack.Name);
+                if (Path.GetFullPath(dir) == Path.GetFullPath(modsBasePath) || !Directory.Exists(dir))
+                    continue;
+                ModkitLog.Info($"[DeployManager] Modpack '{oldModpack.Name}' no longer in staging, removing");
+                Directory.Delete(dir, true);
             }
 
-            // Step 1: Refresh runtime DLLs from bundled directory to pick up latest builds
-            // This just copies bundled DLLs to the cached runtime directory (non-destructive).
             _modpackManager.RefreshRuntimeDlls();
+            progress?.Report("Deploying runtime DLLs...");
+            var runtimeFiles = await Task.Run(() => DeployRuntimeDlls(modsBasePath), ct);
 
-            // Step 2: Compile and stage each modpack
-            // NOTE: Runtime DLLs are deployed AFTER commit to keep them inside the transaction boundary.
-            // Modpack code compilation uses the cached runtime DLLs directory for references,
-            // which doesn't require the DLLs to be deployed to Mods/ yet.
+            var deployedModpacks = new List<DeployedModpack>();
             int total = modpacks.Count;
             for (int i = 0; i < total; i++)
             {
                 ct.ThrowIfCancellationRequested();
                 var modpack = modpacks[i];
-
-                // Compile source code if present
-                if (modpack.Code.HasAnySources)
-                {
-                    progress?.Report($"Compiling {modpack.Name} ({i + 1}/{total})...");
-                    ModkitLog.Info($"Compiling {modpack.Name}: sources={string.Join(", ", modpack.Code.Sources)}, refs={string.Join(", ", modpack.Code.References)}");
-                    var compileResult = await _compilationService.CompileModpackAsync(modpack, ct);
-                    foreach (var diag in compileResult.Diagnostics)
-                        ModkitLog.Info($"  [{diag.Severity}] {diag.File}:{diag.Line} — {diag.Message}");
-                    if (!compileResult.Success)
-                    {
-                        // Include both errors and warnings - warnings often explain WHY errors occurred
-                        // (e.g., "Il2CppAssemblies not found" warning explains "UnityEngine not found" errors)
-                        var errors = string.Join("\n", compileResult.Diagnostics
-                            .Where(d => d.Severity == Models.DiagnosticSeverity.Error)
-                            .Select(d => $"{d.File}:{d.Line} — {d.Message}"));
-                        var warnings = compileResult.Diagnostics
-                            .Where(d => d.Severity == Models.DiagnosticSeverity.Warning)
-                            .Select(d => d.Message)
-                            .ToList();
-                        var msg = $"Compilation failed for {modpack.Name}:\n{errors}";
-                        if (warnings.Count > 0)
-                            msg += $"\n\nPossible causes:\n• " + string.Join("\n• ", warnings);
-                        ModkitLog.Error(msg);
-                        // Transaction will be disposed and cleaned up automatically
-                        return new DeployResult { Success = false, Message = msg };
-                    }
-                    ModkitLog.Info($"Compiled {modpack.Name} → {compileResult.OutputDllPath}");
-                }
-
-                progress?.Report($"Staging {modpack.Name} ({i + 1}/{total})...");
-
-                // Stage modpack to transaction (writes to .deploy-staging/)
-                var (files, fileInfos) = await Task.Run(() => StageModpackToTransaction(modpack, transaction, modsBasePath), ct);
-                deployedFiles.AddRange(files);
-                deployedFileInfos.AddRange(fileInfos);
+                progress?.Report($"Deploying {modpack.Name} ({i + 1}/{total})...");
+                await _deployService.DeployAsync(modpack.Path, progress, ct, forceCompile: true);
 
                 deployedModpacks.Add(new DeployedModpack
                 {
@@ -472,210 +134,27 @@ public class DeployManager
                 });
             }
 
-            // NOTE: No need to restore .original files here before compilation.
-            // BundleCompiler.CompileDataPatchBundleAsync already prefers .original backup files
-            // over potentially-modified live files. This keeps all mutations inside the transaction.
-
-            // Step 3: Try to compile merged patches into an asset bundle
-            // Compilation happens to a temp directory, then files are staged through the transaction.
-            progress?.Report("Compiling asset bundles...");
-            var (bundleFiles, bundleFileInfos) = await TryCompileBundleWithInfoAsync(modpacks, modsBasePath, transaction, ct);
-            deployedFiles.AddRange(bundleFiles);
-            deployedFileInfos.AddRange(bundleFileInfos);
-            // NOTE: Game file patches (resources.assets.patched, globalgamemanagers.patched) are now
-            // staged inside TryCompileBundleWithInfoAsync while the temp compiled directory still exists.
-
-            // COMMIT TRANSACTION - atomically move all staged files into place
-            progress?.Report("Committing deployment...");
-            transaction.Commit();
-            ModkitLog.Info("[DeployManager] Transaction committed successfully");
-
-            // Step 6: Deploy runtime DLLs AFTER transaction commit
-            // This ensures runtime infrastructure is only deployed if the entire transaction succeeded.
-            // Runtime DLLs (ModpackLoader, DataExtractor, etc.) are infrastructure and not rolled back,
-            // but deploying after commit prevents orphaned runtime DLLs if transaction fails.
-            progress?.Report("Deploying runtime DLLs...");
-            var runtimeFiles = await Task.Run(() => DeployRuntimeDlls(modsBasePath), ct);
-            deployedFiles.AddRange(runtimeFiles);
-
-            // Step 7: Save deploy state with current game version
-            var gameVersion = await Task.Run(() => DetectGameVersion(gameInstallPath ?? ""));
-
             var state = new DeployState
             {
                 DeployedModpacks = deployedModpacks,
-                DeployedFiles = deployedFiles,
-                DeployedFileInfos = deployedFileInfos,
-                LastDeployTimestamp = DateTime.Now,
-                GameVersion = gameVersion
+                DeployedFiles = runtimeFiles,
+                LastDeployTimestamp = DateTime.Now
             };
             state.SaveTo(DeployStateFilePath);
 
             progress?.Report($"Deployed {total} modpack(s) successfully");
-            return new DeployResult
-            {
-                Success = true,
-                Message = $"Deployed {total} modpack(s)",
-                DeployedCount = total
-            };
+            return new DeployResult { Success = true, Message = $"Deployed {total} modpack(s)", DeployedCount = total };
         }
         catch (OperationCanceledException)
         {
-            ModkitLog.Warn("[DeployManager] Deployment cancelled - rolling back transaction");
-            // Transaction rollback/cleanup happens automatically via Dispose
             return new DeployResult { Success = false, Message = "Deployment cancelled" };
         }
         catch (Exception ex)
         {
             ModkitLog.Error($"[DeployManager] Deploy failed: {ex}");
-            ModkitLog.Error("[DeployManager] Transaction will be rolled back automatically");
-            // Transaction rollback/cleanup happens automatically via Dispose
             return new DeployResult { Success = false, Message = $"Deploy failed: {ex.Message}" };
         }
     }
-
-    /// <summary>
-    /// Stage a modpack to the transaction instead of deploying directly.
-    /// Files are written to .deploy-staging/ and only committed on success.
-    /// </summary>
-    private (List<string> Files, List<DeployedFileInfo> FileInfos) StageModpackToTransaction(
-        ModpackManifest modpack, DeployTransaction transaction, string modsBasePath)
-    {
-        var files = new List<string>();
-        var fileInfos = new List<DeployedFileInfo>();
-
-        // Guard against empty modpack names
-        if (string.IsNullOrWhiteSpace(modpack.Name))
-        {
-            ModkitLog.Error($"[DeployManager] Cannot stage modpack with empty name (path: {modpack.Path})");
-            return (files, fileInfos);
-        }
-
-        // Create a temporary directory to prepare modpack contents
-        var tempDir = Path.Combine(Path.GetTempPath(), $"modpack-stage-{Guid.NewGuid():N}");
-        var deployTime = DateTime.Now;
-
-        try
-        {
-            // Copy modpack contents to temp directory (applying exclusions)
-            CopyDirectory(modpack.Path, tempDir);
-
-            // Deploy DLLs to temp directory
-            DeployDllsToDirectory(modpack, tempDir);
-
-            // Build runtime manifest in temp directory
-            BuildRuntimeManifest(modpack, tempDir);
-
-            // Stage the entire prepared directory to the transaction
-            transaction.StageDirectory(tempDir, modpack.Name);
-
-            // Track what files will be deployed with detailed info
-            foreach (var fullPath in Directory.GetFiles(tempDir, "*", SearchOption.AllDirectories))
-            {
-                var relativePath = Path.Combine(modpack.Name, Path.GetRelativePath(tempDir, fullPath));
-                files.Add(relativePath);
-
-                try
-                {
-                    var fi = new FileInfo(fullPath);
-                    fileInfos.Add(new DeployedFileInfo
-                    {
-                        RelativePath = relativePath,
-                        FileHash = DeployState.ComputeFileHash(fullPath),
-                        SourceModpack = modpack.Name,
-                        DeployedAt = deployTime,
-                        FileSize = fi.Length
-                    });
-                }
-                catch (Exception ex)
-                {
-                    ModkitLog.Warn($"[DeployManager] Failed to compute file info for {relativePath}: {ex.Message}");
-                }
-            }
-
-            ModkitLog.Info($"[DeployManager] Staged modpack {modpack.Name}: {files.Count} files");
-        }
-        finally
-        {
-            // Clean up temp directory
-            try
-            {
-                if (Directory.Exists(tempDir))
-                    Directory.Delete(tempDir, recursive: true);
-            }
-            catch { /* Best effort cleanup */ }
-        }
-
-        return (files, fileInfos);
-    }
-
-    /// <summary>
-    /// Copy compiled DLLs and prebuilt DLLs to a specified directory.
-    /// Used by StageModpackToTransaction to prepare modpack contents.
-    /// </summary>
-    private void DeployDllsToDirectory(ModpackManifest modpack, string targetDir)
-    {
-        var dllDir = Path.Combine(targetDir, "dlls");
-
-        // Compiled DLLs from build/
-        var buildDir = Path.Combine(modpack.Path, "build");
-        if (Directory.Exists(buildDir))
-        {
-            foreach (var dll in Directory.GetFiles(buildDir, "*.dll"))
-            {
-                Directory.CreateDirectory(dllDir);
-                File.Copy(dll, Path.Combine(dllDir, Path.GetFileName(dll)), true);
-            }
-        }
-
-        // Prebuilt DLLs
-        foreach (var prebuiltRelPath in modpack.Code.PrebuiltDlls)
-        {
-            var fullPath = Path.Combine(modpack.Path, prebuiltRelPath);
-            if (File.Exists(fullPath))
-            {
-                Directory.CreateDirectory(dllDir);
-                File.Copy(fullPath, Path.Combine(dllDir, Path.GetFileName(fullPath)), true);
-            }
-        }
-    }
-
-    /// <summary>
-    /// Stage patched game data files to the transaction.
-    /// Verifies backups exist before staging, and adds patches to the transaction
-    /// for atomic commit with rollback support.
-    /// </summary>
-    private void StageGameDataToTransaction(string modsBasePath, DeployTransaction transaction)
-    {
-        var compiledDir = Path.Combine(modsBasePath, "compiled");
-        if (!Directory.Exists(compiledDir))
-            return;
-
-        var filesToPatch = new[]
-        {
-            ("resources.assets.patched", "resources.assets"),
-            ("globalgamemanagers.patched", "globalgamemanagers")
-        };
-
-        foreach (var (patchedName, originalName) in filesToPatch)
-        {
-            var patchedPath = Path.Combine(compiledDir, patchedName);
-            if (!File.Exists(patchedPath))
-                continue;
-
-            try
-            {
-                // StageGameFilePatch will verify backup exists and stage the patch
-                transaction.StageGameFilePatch(patchedPath, originalName);
-            }
-            catch (Exception ex)
-            {
-                ModkitLog.Error($"[DeployManager] Failed to stage game file patch {originalName}: {ex.Message}");
-                throw; // Re-throw to trigger transaction rollback
-            }
-        }
-    }
-
     /// <summary>
     /// Remove all deployed mods from the game's Mods/ folder.
     /// Core infrastructure DLLs (ModpackLoader, DataExtractor) are preserved.
@@ -1152,609 +631,6 @@ public class DeployManager
     // ---------------------------------------------------------------
 
     /// <summary>
-    /// Merge all modpack patches and clones, then attempt to compile them into an asset bundle.
-    /// Returns list of deployed files (relative to modsBasePath). Falls back silently
-    /// if compilation fails — the runtime JSON loader will handle the patches instead.
-    /// NOTE: This non-transactional version is used by single deploy which doesn't use transactions.
-    /// </summary>
-    private async Task<List<string>> TryCompileBundleAsync(
-        List<ModpackManifest> modpacks, string modsBasePath, CancellationToken ct)
-    {
-        var (files, _) = await TryCompileBundleWithInfoAsync(modpacks, modsBasePath, transaction: null, ct);
-        return files;
-    }
-
-    /// <summary>
-    /// Merge all modpack patches and clones, then attempt to compile them into an asset bundle.
-    /// Returns list of deployed files and detailed file info. Falls back silently
-    /// if compilation fails — the runtime JSON loader will handle the patches instead.
-    /// When a transaction is provided, compiled files are staged through it for atomic deployment.
-    /// </summary>
-    private async Task<(List<string> Files, List<DeployedFileInfo> FileInfos)> TryCompileBundleWithInfoAsync(
-        List<ModpackManifest> modpacks, string modsBasePath, DeployTransaction? transaction, CancellationToken ct)
-    {
-        var files = new List<string>();
-        var fileInfos = new List<DeployedFileInfo>();
-
-        // Collect ordered patch sets from all modpacks
-        var orderedPatchSets = new List<Dictionary<string, Dictionary<string, Dictionary<string, JsonElement>>>>();
-
-        // Collect clone definitions from all modpacks
-        var mergedClones = new MergedCloneSet();
-
-        foreach (var modpack in modpacks)
-        {
-            // Clones from clones/*.json files
-            var clonesDir = Path.Combine(modpack.Path, "clones");
-            if (Directory.Exists(clonesDir))
-            {
-                var modpackClones = new Dictionary<string, Dictionary<string, string>>();
-                foreach (var cloneFile in Directory.GetFiles(clonesDir, "*.json"))
-                {
-                    var templateType = Path.GetFileNameWithoutExtension(cloneFile);
-                    try
-                    {
-                        var json = File.ReadAllText(cloneFile);
-                        var cloneMap = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-                        if (cloneMap != null && cloneMap.Count > 0)
-                            modpackClones[templateType] = cloneMap;
-                    }
-                    catch { }
-                }
-                if (modpackClones.Count > 0)
-                    mergedClones.AddFromModpack(modpackClones);
-            }
-
-            // Patches from stats/*.json files
-            var statsDir = Path.Combine(modpack.Path, "stats");
-            if (Directory.Exists(statsDir))
-            {
-                var statsPatches = new Dictionary<string, Dictionary<string, Dictionary<string, JsonElement>>>();
-                foreach (var statsFile in Directory.GetFiles(statsDir, "*.json"))
-                {
-                    var templateType = Path.GetFileNameWithoutExtension(statsFile);
-                    try
-                    {
-                        var json = File.ReadAllText(statsFile);
-                        var instances = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, JsonElement>>>(json);
-                        if (instances != null)
-                            statsPatches[templateType] = instances;
-                    }
-                    catch { }
-                }
-                if (statsPatches.Count > 0)
-                    orderedPatchSets.Add(statsPatches);
-            }
-
-            // Patches from manifest
-            if (modpack.Patches.Count > 0)
-                orderedPatchSets.Add(modpack.Patches);
-        }
-
-        // Collect audio entries from all modpacks for native AudioClip creation
-        var modpackAssetsDirs = modpacks
-            .Select(m => Path.Combine(m.Path, "assets"))
-            .Where(Directory.Exists)
-            .ToList();
-        var audioCollectResult = AudioBundler.CollectAudioEntriesFromModpacks(modpackAssetsDirs);
-        var audioEntries = audioCollectResult.Entries;
-
-        if (audioCollectResult.Warnings.Count > 0)
-        {
-            foreach (var warn in audioCollectResult.Warnings)
-                ModkitLog.Warn($"[DeployManager] Audio: {warn}");
-        }
-
-        // Collect texture and model entries from all modpacks for native asset creation
-        var allTextureEntries = new List<BundleCompiler.TextureEntry>();
-        var allModelEntries = new List<BundleCompiler.ModelEntry>();
-        foreach (var modpack in modpacks)
-        {
-            var assetsDir = Path.Combine(modpack.Path, "assets");
-            var imageExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-                { ".png", ".jpg", ".jpeg", ".tga", ".bmp" };
-
-            // First try modpack.Assets dictionary for proper game path mappings
-            if (modpack.Assets != null && modpack.Assets.Count > 0)
-            {
-                foreach (var (gameAssetPath, localPath) in modpack.Assets)
-                {
-                    var ext = Path.GetExtension(gameAssetPath);
-                    if (!imageExtensions.Contains(ext))
-                        continue;
-
-                    var fullLocalPath = Path.Combine(modpack.Path, localPath);
-                    if (!File.Exists(fullLocalPath))
-                        continue;
-
-                    var assetName = Path.GetFileNameWithoutExtension(gameAssetPath);
-
-                    // Build resource path from game asset path (strip extension, lowercase)
-                    // Unity ResourceManager uses paths RELATIVE to Resources folder
-                    // e.g., "Assets/Resources/ui/textures/bg.png" -> "ui/textures/bg"
-                    var resourcePath = gameAssetPath;
-                    if (resourcePath.EndsWith(ext, StringComparison.OrdinalIgnoreCase))
-                        resourcePath = resourcePath[..^ext.Length];
-                    resourcePath = resourcePath.Replace('\\', '/');
-
-                    // Strip "Assets/Resources/" prefix if present (Unity uses relative paths)
-                    if (resourcePath.StartsWith("Assets/Resources/", StringComparison.OrdinalIgnoreCase))
-                        resourcePath = resourcePath.Substring("Assets/Resources/".Length);
-                    else if (resourcePath.StartsWith("assets/resources/", StringComparison.OrdinalIgnoreCase))
-                        resourcePath = resourcePath.Substring("assets/resources/".Length);
-
-                    resourcePath = resourcePath.ToLowerInvariant();
-
-                    allTextureEntries.Add(new BundleCompiler.TextureEntry
-                    {
-                        AssetName = assetName,
-                        SourceFilePath = fullLocalPath,
-                        ResourcePath = resourcePath,
-                        CreateSprite = true // Create sprites by default for UI textures
-                    });
-                }
-            }
-            // Fallback: scan assets folder directly if Assets dictionary is empty
-            else if (Directory.Exists(assetsDir))
-            {
-                var imageFiles = imageExtensions
-                    .SelectMany(ext => Directory.GetFiles(assetsDir, $"*{ext}", SearchOption.AllDirectories))
-                    .ToList();
-
-                foreach (var imagePath in imageFiles)
-                {
-                    var assetName = Path.GetFileNameWithoutExtension(imagePath);
-                    var relativePath = Path.GetRelativePath(assetsDir, imagePath).Replace('\\', '/');
-
-                    // Build a resource path based on the modpack name and relative path
-                    var resourcePath = $"assets/textures/{modpack.Name}/{Path.GetFileNameWithoutExtension(relativePath)}".ToLowerInvariant();
-
-                    allTextureEntries.Add(new BundleCompiler.TextureEntry
-                    {
-                        AssetName = assetName,
-                        SourceFilePath = imagePath,
-                        ResourcePath = resourcePath,
-                        CreateSprite = true
-                    });
-                }
-            }
-
-            // Collect GLB/GLTF model entries for native asset creation
-            if (Directory.Exists(assetsDir))
-            {
-                var glbFiles = Directory.GetFiles(assetsDir, "*.glb", SearchOption.AllDirectories)
-                    .Concat(Directory.GetFiles(assetsDir, "*.gltf", SearchOption.AllDirectories));
-
-                foreach (var glbPath in glbFiles)
-                {
-                    var assetName = Path.GetFileNameWithoutExtension(glbPath);
-
-                    // Build resource path based on modpack assets mapping or default
-                    var relativePath = Path.GetRelativePath(assetsDir, glbPath).Replace('\\', '/');
-                    var resourcePath = $"assets/models/{modpack.Name}/{assetName}".ToLowerInvariant();
-
-                    allModelEntries.Add(new BundleCompiler.ModelEntry
-                    {
-                        AssetName = assetName,
-                        SourceFilePath = glbPath,
-                        ResourcePath = resourcePath
-                    });
-                }
-            }
-        }
-
-        if (allTextureEntries.Count > 0)
-        {
-            ModkitLog.Info($"[DeployManager] Collected {allTextureEntries.Count} texture(s) for native asset creation");
-        }
-        if (allModelEntries.Count > 0)
-        {
-            ModkitLog.Info($"[DeployManager] Collected {allModelEntries.Count} model(s) for native asset creation");
-        }
-
-        var merged = MergedPatchSet.MergePatchSets(orderedPatchSets);
-
-        // Only skip compilation if there are no patches, no clones, no audio, AND no models
-        // NOTE: Textures are now handled at runtime to avoid ColorSpace issues
-        bool hasAudio = audioEntries.Count > 0;
-        bool hasModels = allModelEntries.Count > 0;
-        if (merged.Patches.Count == 0 && !mergedClones.HasClones && !hasAudio && !hasModels)
-            return (files, fileInfos);
-
-        // Determine game data path and Unity version
-        var gameInstallPath = _modpackManager.GetGameInstallPath();
-        if (string.IsNullOrEmpty(gameInstallPath))
-            return (files, fileInfos);
-
-        var unityVersion = DetectUnityVersion(gameInstallPath);
-
-        // Use a temp directory for compilation when we have a transaction
-        // This ensures compiled artifacts don't pollute the final location if transaction fails
-        var useTransaction = transaction != null;
-        var tempCompiledDir = useTransaction
-            ? Path.Combine(Path.GetTempPath(), $"modkit-compiled-{Guid.NewGuid():N}")
-            : null;
-        var compiledDir = tempCompiledDir ?? Path.Combine(modsBasePath, "compiled");
-        var outputPath = Path.Combine(compiledDir, "templates.bundle");
-
-        try
-        {
-            // Copy texture files to compiled/textures for runtime loading
-            // (asset-file texture creation had ColorSpace issues, runtime loading works correctly)
-            var texturesDir = Path.Combine(compiledDir, "textures");
-            if (allTextureEntries.Count > 0)
-            {
-                Directory.CreateDirectory(texturesDir);
-                ModkitLog.Info($"[DeployManager] Copying {allTextureEntries.Count} texture(s) for runtime loading...");
-                foreach (var tex in allTextureEntries)
-                {
-                    try
-                    {
-                        var destPath = Path.Combine(texturesDir, $"{tex.AssetName}.png");
-                        File.Copy(tex.SourceFilePath, destPath, overwrite: true);
-                    }
-                    catch (Exception ex)
-                    {
-                        ModkitLog.Warn($"[DeployManager] Failed to copy texture '{tex.AssetName}': {ex.Message}");
-                    }
-                }
-            }
-
-            // NOTE: Textures are handled at runtime via copied PNG files
-            // Asset-file texture creation always resulted in washed-out colors
-            ModkitLog.Info($"[DeployManager] Compiling bundle: {mergedClones.TotalCloneCount} clone(s), {merged.Patches.Count} patch type(s), {audioEntries.Count} audio file(s), {allModelEntries.Count} model(s), {allTextureEntries.Count} texture(s) (runtime)");
-            var compiler = new BundleCompiler();
-            var result = await compiler.CompileDataPatchBundleAsync(
-                merged,
-                mergedClones,
-                audioEntries.Count > 0 ? audioEntries : null,
-                null, // Textures handled at runtime - asset creation had ColorSpace issues
-                allModelEntries.Count > 0 ? allModelEntries : null,
-                gameInstallPath,
-                unityVersion,
-                outputPath,
-                ct);
-
-            if (result.Success && result.OutputPath != null)
-            {
-                ModkitLog.Info($"[DeployManager] Bundle compiled: {result.Message}");
-                // Log any warnings even on success
-                foreach (var warn in result.Warnings)
-                    ModkitLog.Info($"[DeployManager]   - {warn}");
-
-                // Track all files in the compiled directory with detailed info
-                var deployTime = DateTime.Now;
-                foreach (var fullPath in Directory.GetFiles(compiledDir, "*", SearchOption.AllDirectories))
-                {
-                    var relativePath = Path.Combine("compiled", Path.GetRelativePath(compiledDir, fullPath));
-                    files.Add(relativePath);
-
-                    try
-                    {
-                        var fi = new FileInfo(fullPath);
-                        fileInfos.Add(new DeployedFileInfo
-                        {
-                            RelativePath = relativePath,
-                            FileHash = DeployState.ComputeFileHash(fullPath),
-                            SourceModpack = "compiled", // Special marker for compiled assets
-                            DeployedAt = deployTime,
-                            FileSize = fi.Length
-                        });
-                    }
-                    catch (Exception hashEx)
-                    {
-                        ModkitLog.Warn($"[DeployManager] Failed to compute file info for {relativePath}: {hashEx.Message}");
-                    }
-                }
-
-                // Stage compiled files through transaction if available
-                if (useTransaction && tempCompiledDir != null)
-                {
-                    ModkitLog.Info($"[DeployManager] Staging {files.Count} compiled file(s) through transaction");
-                    transaction!.StageDirectory(tempCompiledDir, "compiled");
-
-                    // Also stage game file patches (resources.assets.patched, globalgamemanagers.patched)
-                    // These are in the temp compiled directory and need to be staged before we clean up
-                    var filesToPatch = new[]
-                    {
-                        ("resources.assets.patched", "resources.assets"),
-                        ("globalgamemanagers.patched", "globalgamemanagers")
-                    };
-
-                    foreach (var (patchedName, originalName) in filesToPatch)
-                    {
-                        var patchedPath = Path.Combine(tempCompiledDir, patchedName);
-                        if (!File.Exists(patchedPath))
-                            continue;
-
-                        try
-                        {
-                            // StageGameFilePatch will verify backup exists and stage the patch
-                            transaction.StageGameFilePatch(patchedPath, originalName);
-                            ModkitLog.Info($"[DeployManager] Staged game file patch: {originalName}");
-                        }
-                        catch (Exception ex)
-                        {
-                            ModkitLog.Error($"[DeployManager] Failed to stage game file patch {originalName}: {ex.Message}");
-                            throw; // Re-throw to trigger transaction rollback
-                        }
-                    }
-                }
-            }
-            else
-            {
-                ModkitLog.Warn($"[DeployManager] Bundle compilation failed: {result.Message}");
-                foreach (var warn in result.Warnings)
-                    ModkitLog.Warn($"[DeployManager]   - {warn}");
-            }
-        }
-        catch (Exception ex)
-        {
-            ModkitLog.Error($"[DeployManager] Bundle compilation exception: {ex.Message}");
-        }
-        finally
-        {
-            // Clean up temp directory if we used one
-            if (tempCompiledDir != null && Directory.Exists(tempCompiledDir))
-            {
-                try
-                {
-                    Directory.Delete(tempCompiledDir, recursive: true);
-                }
-                catch { /* Best effort cleanup */ }
-            }
-        }
-
-        return (files, fileInfos);
-    }
-
-    /// <summary>
-    /// Try to detect the Unity version from the game install.
-    /// Returns a fallback string if detection fails.
-    /// </summary>
-    private static string DetectUnityVersion(string gameInstallPath)
-    {
-        // Look for globalgamemanagers or data.unity3d to read version from
-        var dataDirs = Directory.GetDirectories(gameInstallPath, "*_Data");
-        foreach (var dataDir in dataDirs)
-        {
-            var ggm = Path.Combine(dataDir, "globalgamemanagers");
-            if (File.Exists(ggm))
-            {
-                try
-                {
-                    // The Unity version is stored near the start of globalgamemanagers
-                    using var fs = File.OpenRead(ggm);
-                    using var reader = new BinaryReader(fs);
-                    // Skip header bytes and read version string
-                    // This is a simplified approach — the full detector in Core is more robust
-                    fs.Seek(0x14, SeekOrigin.Begin);
-                    var bytes = new List<byte>();
-                    byte b;
-                    while ((b = reader.ReadByte()) != 0 && bytes.Count < 30)
-                        bytes.Add(b);
-                    var version = Encoding.ASCII.GetString(bytes.ToArray());
-                    if (version.Contains('.') && version.Length > 3)
-                        return version;
-                }
-                catch { }
-            }
-        }
-
-        return "2020.3.0f1"; // Fallback
-    }
-
-    private List<string> DeployModpack(ModpackManifest modpack, string modsBasePath)
-    {
-        var (files, _) = DeployModpackWithInfo(modpack, modsBasePath);
-        return files;
-    }
-
-    /// <summary>
-    /// Deploy a modpack and return both the file list and detailed file info.
-    /// This is the core deployment logic that tracks per-file hashes and metadata.
-    /// </summary>
-    private (List<string> Files, List<DeployedFileInfo> FileInfos) DeployModpackWithInfo(ModpackManifest modpack, string modsBasePath)
-    {
-        // Guard against empty modpack names which would deploy to root Mods folder
-        if (string.IsNullOrWhiteSpace(modpack.Name))
-        {
-            ModkitLog.Error($"[DeployManager] Cannot deploy modpack with empty name (path: {modpack.Path})");
-            return (new List<string>(), new List<DeployedFileInfo>());
-        }
-
-        var deployDir = Path.Combine(modsBasePath, modpack.Name);
-        var files = new List<string>();
-        var fileInfos = new List<DeployedFileInfo>();
-        var deployTime = DateTime.Now;
-
-        // Copy all modpack files to deploy directory
-        CopyDirectory(modpack.Path, deployDir);
-
-        // Deploy compiled DLLs from build/ directory
-        DeployDlls(modpack, deployDir);
-
-        // Build runtime manifest (must happen before tracking files so modpack.json is included)
-        BuildRuntimeManifest(modpack, deployDir);
-
-        // Track deployed files with detailed info
-        foreach (var fullPath in Directory.GetFiles(deployDir, "*", SearchOption.AllDirectories))
-        {
-            var relativePath = Path.GetRelativePath(modsBasePath, fullPath);
-            files.Add(relativePath);
-
-            try
-            {
-                var fi = new FileInfo(fullPath);
-                fileInfos.Add(new DeployedFileInfo
-                {
-                    RelativePath = relativePath,
-                    FileHash = DeployState.ComputeFileHash(fullPath),
-                    SourceModpack = modpack.Name,
-                    DeployedAt = deployTime,
-                    FileSize = fi.Length
-                });
-            }
-            catch (Exception ex)
-            {
-                ModkitLog.Warn($"[DeployManager] Failed to compute file info for {relativePath}: {ex.Message}");
-                // Still track the file path even if we couldn't get full info
-            }
-        }
-
-        return (files, fileInfos);
-    }
-
-    /// <summary>
-    /// Copy compiled DLLs and prebuilt DLLs to the deploy directory.
-    /// </summary>
-    private void DeployDlls(ModpackManifest modpack, string deployDir)
-    {
-        var dllDir = Path.Combine(deployDir, "dlls");
-
-        // Compiled DLLs from build/
-        var buildDir = Path.Combine(modpack.Path, "build");
-        if (Directory.Exists(buildDir))
-        {
-            foreach (var dll in Directory.GetFiles(buildDir, "*.dll"))
-            {
-                Directory.CreateDirectory(dllDir);
-                File.Copy(dll, Path.Combine(dllDir, Path.GetFileName(dll)), true);
-            }
-        }
-
-        // Prebuilt DLLs
-        foreach (var prebuiltRelPath in modpack.Code.PrebuiltDlls)
-        {
-            var fullPath = Path.Combine(modpack.Path, prebuiltRelPath);
-            if (File.Exists(fullPath))
-            {
-                Directory.CreateDirectory(dllDir);
-                File.Copy(fullPath, Path.Combine(dllDir, Path.GetFileName(fullPath)), true);
-            }
-        }
-    }
-
-    private void BuildRuntimeManifest(ModpackManifest modpack, string deployPath)
-    {
-        var runtimeObj = new JsonObject
-        {
-            ["manifestVersion"] = 2,
-            ["name"] = modpack.Name,
-            ["version"] = modpack.Version,
-            ["author"] = modpack.Author,
-            ["loadOrder"] = modpack.LoadOrder
-        };
-
-        // Merge patches from manifest and stats/*.json files
-        var patches = new JsonObject();
-        var legacyTemplates = new JsonObject();
-
-        // Stats files first
-        var statsDir = Path.Combine(modpack.Path, "stats");
-        if (Directory.Exists(statsDir))
-        {
-            foreach (var statsFile in Directory.GetFiles(statsDir, "*.json"))
-            {
-                var templateType = Path.GetFileNameWithoutExtension(statsFile);
-                try
-                {
-                    var node = JsonNode.Parse(File.ReadAllText(statsFile));
-                    if (node != null)
-                    {
-                        patches[templateType] = JsonNode.Parse(node.ToJsonString());
-                        legacyTemplates[templateType] = node;
-                    }
-                }
-                catch { }
-            }
-        }
-
-        // Manifest patches (stats files take priority)
-        if (modpack.Patches.Count > 0)
-        {
-            var patchJson = JsonSerializer.Serialize(modpack.Patches);
-            var patchNode = JsonNode.Parse(patchJson)?.AsObject();
-            if (patchNode != null)
-            {
-                foreach (var kvp in patchNode)
-                {
-                    if (!patches.ContainsKey(kvp.Key) && kvp.Value != null)
-                        patches[kvp.Key] = JsonNode.Parse(kvp.Value.ToJsonString());
-                }
-            }
-        }
-
-        runtimeObj["patches"] = patches;
-        runtimeObj["templates"] = legacyTemplates; // v1 backward compat
-
-        // Clones from clones/*.json files
-        var clones = new JsonObject();
-        var clonesDir = Path.Combine(deployPath, "clones");
-        if (Directory.Exists(clonesDir))
-        {
-            foreach (var file in Directory.GetFiles(clonesDir, "*.json"))
-            {
-                var templateType = Path.GetFileNameWithoutExtension(file);
-                try
-                {
-                    var node = JsonNode.Parse(File.ReadAllText(file));
-                    if (node != null)
-                        clones[templateType] = node;
-                }
-                catch { }
-            }
-        }
-        if (clones.Count > 0)
-            runtimeObj["clones"] = clones;
-
-        // Assets: start from manifest entries, then scan for unregistered files
-        var assetsObj = new JsonObject();
-        if (modpack.Assets.Count > 0)
-        {
-            foreach (var kvp in modpack.Assets)
-                assetsObj[kvp.Key] = kvp.Value;
-        }
-
-        // Fallback scan: pick up any files in assets/ not already in the manifest
-        var assetsDir = Path.Combine(modpack.Path, "assets");
-        if (Directory.Exists(assetsDir))
-        {
-            foreach (var file in Directory.GetFiles(assetsDir, "*", SearchOption.AllDirectories))
-            {
-                var relPath = Path.GetRelativePath(assetsDir, file);
-                if (!assetsObj.ContainsKey(relPath))
-                    assetsObj[relPath] = Path.Combine("assets", relPath);
-            }
-        }
-
-        runtimeObj["assets"] = assetsObj;
-
-        // Code
-        if (modpack.Code.HasAnyCode)
-        {
-            var codeObj = new JsonObject
-            {
-                ["sources"] = new JsonArray(modpack.Code.Sources.Select(s => (JsonNode)JsonValue.Create(s)!).ToArray()),
-                ["references"] = new JsonArray(modpack.Code.References.Select(r => (JsonNode)JsonValue.Create(r)!).ToArray()),
-                ["prebuiltDlls"] = new JsonArray(modpack.Code.PrebuiltDlls.Select(d => (JsonNode)JsonValue.Create(d)!).ToArray())
-            };
-            runtimeObj["code"] = codeObj;
-        }
-
-        // Bundles
-        if (modpack.Bundles.Count > 0)
-        {
-            runtimeObj["bundles"] = new JsonArray(modpack.Bundles.Select(b => (JsonNode)JsonValue.Create(b)!).ToArray());
-        }
-
-        runtimeObj["securityStatus"] = modpack.SecurityStatus.ToString();
-
-        var manifestPath = Path.Combine(deployPath, "modpack.json");
-        File.WriteAllText(manifestPath, runtimeObj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
-    }
-
-    /// <summary>
     /// Copy runtime DLLs from runtime/ into the game install.
     /// Menace.* mod DLLs go to Mods/, support libraries go to UserLibs/.
     /// Note: Core DLLs are NOT tracked in deploy state - they are infrastructure
@@ -1822,34 +698,6 @@ public class DeployManager
         return new List<string>();
     }
 
-    private void CleanPreviousDeployment(DeployState previousState, string modsBasePath)
-    {
-        foreach (var mp in previousState.DeployedModpacks)
-        {
-            // Skip empty/invalid names to avoid deleting Mods folder itself
-            if (string.IsNullOrWhiteSpace(mp.Name))
-            {
-                ModkitLog.Warn($"[DeployManager] CleanPreviousDeployment: Skipping invalid modpack with empty name");
-                continue;
-            }
-
-            var dir = Path.Combine(modsBasePath, mp.Name);
-
-            // Safety: never delete the Mods folder itself
-            if (Path.GetFullPath(dir) == Path.GetFullPath(modsBasePath))
-            {
-                ModkitLog.Warn($"[DeployManager] CleanPreviousDeployment: Skipping deletion of Mods folder itself");
-                continue;
-            }
-
-            if (Directory.Exists(dir))
-            {
-                ModkitLog.Info($"[DeployManager] CleanPreviousDeployment: Removing {mp.Name}");
-                Directory.Delete(dir, true);
-            }
-        }
-    }
-
     private static string ComputeDirectoryHash(string directory)
     {
         if (!Directory.Exists(directory))
@@ -1885,23 +733,6 @@ public class DeployManager
         ".vs",      // Visual Studio data
     };
 
-    private static void CopyDirectory(string sourceDir, string destDir)
-    {
-        Directory.CreateDirectory(destDir);
-        foreach (var file in Directory.GetFiles(sourceDir))
-        {
-            File.Copy(file, Path.Combine(destDir, Path.GetFileName(file)), true);
-        }
-        foreach (var dir in Directory.GetDirectories(sourceDir))
-        {
-            var dirName = Path.GetFileName(dir);
-            // Skip excluded directories
-            if (ExcludedDirectories.Contains(dirName))
-                continue;
-            CopyDirectory(dir, Path.Combine(destDir, dirName));
-        }
-    }
-
     /// <summary>
     /// Check if a modpack is a developer-only modpack that should be excluded
     /// from deployment unless EnableDeveloperTools is enabled.
@@ -1913,55 +744,6 @@ public class DeployManager
             return true;
 
         return false;
-    }
-
-    /// <summary>
-    /// Deploy patched game data files (resources.assets, globalgamemanagers) to the game's data directory.
-    /// Creates backups of originals if they don't exist.
-    /// </summary>
-    private void DeployPatchedGameData(string modsBasePath)
-    {
-        var gameInstallPath = _modpackManager.GetGameInstallPath();
-        if (string.IsNullOrEmpty(gameInstallPath))
-            return;
-
-        var gameDataDir = Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
-        if (string.IsNullOrEmpty(gameDataDir))
-            return;
-
-        var compiledDir = Path.Combine(modsBasePath, "compiled");
-        if (!Directory.Exists(compiledDir))
-            return;
-
-        // Files to patch: resources.assets and globalgamemanagers
-        var filesToPatch = new[]
-        {
-            ("resources.assets.patched", "resources.assets"),
-            ("globalgamemanagers.patched", "globalgamemanagers")
-        };
-
-        foreach (var (patchedName, originalName) in filesToPatch)
-        {
-            var patchedPath = Path.Combine(compiledDir, patchedName);
-            if (!File.Exists(patchedPath))
-                continue;
-
-            var originalPath = Path.Combine(gameDataDir, originalName);
-            var backupPath = Path.Combine(gameDataDir, originalName + ".original");
-
-            // Only create backup if one doesn't exist yet (preserve vanilla backup)
-            // CRITICAL: Don't overwrite existing .original - it may be the only vanilla copy!
-            // Previous bug: always creating "fresh backup" would copy a patched file to .original
-            if (File.Exists(originalPath) && !File.Exists(backupPath))
-            {
-                ModkitLog.Info($"[DeployManager] Creating first-time backup: {originalName} -> {originalName}.original");
-                File.Copy(originalPath, backupPath);
-            }
-
-            // Copy patched file over original
-            ModkitLog.Info($"[DeployManager] Deploying patched: {patchedName} -> {originalName}");
-            File.Copy(patchedPath, originalPath, overwrite: true);
-        }
     }
 
     /// <summary>
