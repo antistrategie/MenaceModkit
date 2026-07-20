@@ -109,6 +109,19 @@ public sealed class ModInstallService
         if (IsLeaderPack(modRootDir))
             return PlaceNamed(modRootDir, Path.Combine(modsPath, "customleaders"), name);
 
+        // An archive whose root IS a customleaders/ folder (the common multi-leader
+        // distribution shape): merge each pack individually — replacing the whole
+        // Mods/customleaders/ dir would wipe every previously installed leader.
+        if (Path.GetFileName(modRootDir.TrimEnd(Path.DirectorySeparatorChar))
+                .Equals("customleaders", StringComparison.OrdinalIgnoreCase))
+        {
+            string merged = string.Empty;
+            foreach (var pack in Directory.GetDirectories(modRootDir))
+                merged = PlaceNamed(pack, Path.Combine(modsPath, "customleaders"), Path.GetFileName(pack));
+            if (merged.Length > 0)
+                return merged;
+        }
+
         string target = string.Empty;
 
         // Bundled leader packs (the CustomLeader framework zip ships customleaders/<x>/

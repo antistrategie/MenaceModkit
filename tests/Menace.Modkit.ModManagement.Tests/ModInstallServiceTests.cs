@@ -100,6 +100,27 @@ public sealed class ModInstallServiceTests : IDisposable
         Assert.False(Directory.Exists(Path.Combine(_modsDir, "jane")));
     }
 
+    [Fact]
+    public void InstallFrom_CustomleadersRootArchive_MergesWithoutWipingExisting()
+    {
+        // The common multi-leader distribution: the archive root IS customleaders/.
+        var existing = Path.Combine(_modsDir, "customleaders", "menace");
+        Directory.CreateDirectory(existing);
+        File.WriteAllText(Path.Combine(existing, "menace_clone.json"), "{}");
+
+        var src = Path.Combine(_gameDir, "incoming", "customleaders");
+        Directory.CreateDirectory(Path.Combine(src, "anis"));
+        Directory.CreateDirectory(Path.Combine(src, "clay"));
+        File.WriteAllText(Path.Combine(src, "anis", "anis_clone.json"), "{}");
+        File.WriteAllText(Path.Combine(src, "clay", "clay_clone.json"), "{}");
+
+        new ModInstallService(_config).InstallFrom(src, "customleaders");
+
+        Assert.True(File.Exists(Path.Combine(_modsDir, "customleaders", "anis", "anis_clone.json")));
+        Assert.True(File.Exists(Path.Combine(_modsDir, "customleaders", "clay", "clay_clone.json")));
+        Assert.True(File.Exists(Path.Combine(existing, "menace_clone.json"))); // untouched
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_gameDir, recursive: true); } catch { /* best effort */ }

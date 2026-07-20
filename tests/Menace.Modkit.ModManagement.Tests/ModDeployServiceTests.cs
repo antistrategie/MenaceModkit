@@ -154,6 +154,22 @@ public sealed class ModDeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Deploy_HybridModpack_SplitsLeaderPacksToSharedRoot()
+    {
+        // SkyBot shape: a modpack that also bundles a CustomLeader pack. The framework
+        // only reads Mods/customleaders/, so the pack must be split out of the modpack.
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Shrike"",""version"":""2.1.0""}");
+        var pack = Path.Combine(_sourceDir, "customleaders", "shrike");
+        Directory.CreateDirectory(pack);
+        File.WriteAllText(Path.Combine(pack, "shrike_clone.json"), @"{""nickname"":""Shrike""}");
+
+        var target = await new ModDeployService(_config).DeployAsync(_sourceDir);
+
+        Assert.True(File.Exists(Path.Combine(_modsDir, "customleaders", "shrike", "shrike_clone.json")));
+        Assert.False(Directory.Exists(Path.Combine(target, "customleaders")));
+    }
+
+    [Fact]
     public async Task Deploy_ReplacesExistingInstall()
     {
         WriteManifest(@"{""manifestVersion"":2,""name"":""Dup"",""version"":""1.0.0""}");

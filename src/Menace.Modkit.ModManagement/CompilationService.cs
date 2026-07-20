@@ -50,9 +50,11 @@ public class CompilationService
     {
         var modpackDir = manifest.Path;
 
-        // Collect source files (absolute paths)
+        // Collect source files (absolute paths). Manifests authored on Windows use
+        // backslash separators ("src\\Mod.cs") — normalise or the path is a literal
+        // filename on Linux and the compile dies with "no source files".
         var sourceFiles = manifest.Code.Sources
-            .Select(s => Path.Combine(modpackDir, s))
+            .Select(s => Path.Combine(modpackDir, s.Replace('\\', Path.DirectorySeparatorChar)))
             .Where(File.Exists)
             .ToList();
 

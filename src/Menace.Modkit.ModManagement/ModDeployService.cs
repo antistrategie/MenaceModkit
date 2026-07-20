@@ -91,6 +91,11 @@ public sealed class ModDeployService
         // 5. Write the runtime modpack.json (stats/*.json + clones/*.json merged in).
         RuntimeManifestWriter.Write(sourceDir, target, deployedBy);
 
+        // 6. Hybrid mods (e.g. SkyBot-style leaders) bundle CustomLeader packs beside their
+        //    modpack content. The MenaceCustomLeader framework only reads the fixed
+        //    Mods/customleaders/ root, so split those packs out of the modpack folder.
+        SplitOutLeaderPacks(sourceDir, target, modsPath);
+
         progress?.Report($"Deployed {name}");
         return target;
     }
@@ -104,7 +109,32 @@ public sealed class ModDeployService
             if (Directory.Exists(p) && Directory.EnumerateFiles(p, "*.dll").Any())
                 return true;
         }
-        return manifest.Code.PrebuiltDlls.Any(rel => File.Exists(Path.Combine(dir, rel)));
+        return manifest.Code.PrebuiltDlls.Any(rel =>
+            File.Exists(Path.Combine(dir, rel.Replace('\\', Path.DirectorySeparatorChar))));
+    }
+
+    /// <summary>
+    /// Move any bundled CustomLeader packs (<c>customleaders/&lt;name&gt;/</c> in the source)
+    /// into the shared <c>Mods/customleaders/</c> root and drop them from the deployed
+    /// modpack folder — the framework never looks inside modpacks.
+    /// </summary>
+    private static void SplitOutLeaderPacks(string sourceDir, string target, string modsPath)
+    {
+        var bundled = Path.Combine(sourceDir, "customleaders");
+        if (!Directory.Exists(bundled))
+            return;
+
+        foreach (var pack in Directory.GetDirectories(bundled))
+        {
+            var packTarget = Path.Combine(modsPath, "customleaders", Path.GetFileName(pack));
+            if (Directory.Exists(packTarget))
+                Directory.Delete(packTarget, recursive: true);
+            CopyTree(pack, packTarget, isRoot: true);
+        }
+
+        var nested = Path.Combine(target, "customleaders");
+        if (Directory.Exists(nested))
+            Directory.Delete(nested, recursive: true);
     }
 
     private static void CopyTree(string source, string dest, bool isRoot)
@@ -140,10 +170,10 @@ public sealed class ModDeployService
             }
         }
 
-        // Prebuilt DLLs declared in the manifest.
+        // Prebuilt DLLs declared in the manifest (separators normalised for Windows-authored paths).
         foreach (var prebuilt in manifest.Code.PrebuiltDlls)
         {
-            var full = Path.Combine(sourceDir, prebuilt);
+            var full = Path.Combine(sourceDir, prebuilt.Replace('\\', Path.DirectorySeparatorChar));
             if (File.Exists(full))
             {
                 Directory.CreateDirectory(dllDir);
