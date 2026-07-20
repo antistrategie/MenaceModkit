@@ -23,6 +23,27 @@ public sealed class ModEnableServiceTests : IDisposable
         _config = new TestModkitConfig { GameInstallPath = _gameDir };
     }
 
+    [Fact]
+    public void Toggle_LeaderPack_PreservesCustomleadersNesting()
+    {
+        var packDir = Path.Combine(_modsDir, "customleaders", "menace");
+        Directory.CreateDirectory(packDir);
+        File.WriteAllText(Path.Combine(packDir, "menace_clone.json"), @"{""nickname"":""MENACE""}");
+
+        var svc = new ModEnableService(_config);
+        var catalog = new ModCatalog(_config);
+
+        var mod = Assert.Single(catalog.Scan(), m => m.Kind == ModKind.Leader);
+        svc.Disable(mod);
+        Assert.True(File.Exists(Path.Combine(_gameDir, "DisabledMods", "customleaders", "menace", "menace_clone.json")));
+        Assert.False(Directory.Exists(packDir));
+
+        var disabled = Assert.Single(catalog.Scan(), m => m.Kind == ModKind.Leader);
+        Assert.False(disabled.IsEnabled);
+        svc.Enable(disabled);
+        Assert.True(File.Exists(Path.Combine(packDir, "menace_clone.json")));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_gameDir, recursive: true); } catch { /* best effort */ }

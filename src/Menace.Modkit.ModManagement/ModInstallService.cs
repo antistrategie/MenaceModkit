@@ -100,43 +100,77 @@ public sealed class ModInstallService
         Directory.CreateDirectory(modsPath);
 
         // A folder is only a loadable mod when a loader reads it: modpack.json
-        // (ModpackLoader) or jiangyu.json (Jiangyu). Raw MelonMods load ONLY as
-        // top-level Mods/*.dll — MelonLoader does not scan subfolders — so hoist
-        // their DLLs to the root instead of burying them in a folder nothing reads.
-        if (!HasModManifest(modRootDir))
+        // (ModpackLoader) or jiangyu.json (Jiangyu).
+        if (HasModManifest(modRootDir))
+            return PlaceNamed(modRootDir, modsPath, name);
+
+        // A CustomLeader leader pack ({leader}_clone.json / _replace.json + portrait art)
+        // is read by the MenaceCustomLeader framework from Mods/customleaders/<name>/.
+        if (IsLeaderPack(modRootDir))
+            return PlaceNamed(modRootDir, Path.Combine(modsPath, "customleaders"), name);
+
+        string target = string.Empty;
+
+        // Bundled leader packs (the CustomLeader framework zip ships customleaders/<x>/
+        // beside its DLL): merge each pack into the shared Mods/customleaders/ root.
+        var bundledLeaders = Path.Combine(modRootDir, "customleaders");
+        var hasBundledLeaders = Directory.Exists(bundledLeaders);
+        if (hasBundledLeaders)
         {
-            var dlls = Directory.GetFiles(modRootDir, "*.dll");
-            if (dlls.Length > 0)
-            {
-                string target = string.Empty;
-                foreach (var dll in dlls)
-                    target = InstallDll(dll, modsPath);
-
-                // Keep any non-DLL payload (rare: a melon that reads its own data
-                // folder) in a named folder beside the hoisted DLLs; plain docs
-                // (readme/changelog) aren't worth a folder.
-                if (HasPayloadBeyondDllsAndDocs(modRootDir))
-                {
-                    var folder = PlaceNamed(modRootDir, modsPath, name);
-                    foreach (var placedDll in Directory.GetFiles(folder, "*.dll"))
-                        File.Delete(placedDll);
-                }
-
-                return target;
-            }
+            foreach (var pack in Directory.GetDirectories(bundledLeaders))
+                target = PlaceNamed(pack, Path.Combine(modsPath, "customleaders"), Path.GetFileName(pack));
         }
 
-        return PlaceNamed(modRootDir, modsPath, name);
+        // Raw MelonMods load ONLY as top-level Mods/*.dll — MelonLoader does not scan
+        // subfolders — so hoist their DLLs to the root instead of burying them in a
+        // folder nothing reads.
+        var dlls = Directory.GetFiles(modRootDir, "*.dll");
+        foreach (var dll in dlls)
+            target = InstallDll(dll, modsPath);
+
+        // Nothing recognised: install as a plain folder (the catalog will surface it).
+        if (target.Length == 0)
+            return PlaceNamed(modRootDir, modsPath, name);
+
+        // Keep any non-DLL payload (rare: a melon that reads its own data folder) in a
+        // named folder beside the hoisted pieces; junk dirs, docs, consumed leader packs
+        // and authoring tools/ aren't worth one.
+        if (HasPayloadBeyondKnown(modRootDir, ignoreLeaderExtras: hasBundledLeaders))
+        {
+            var folder = PlaceNamed(modRootDir, modsPath, name);
+            foreach (var placedDll in Directory.GetFiles(folder, "*.dll"))
+                File.Delete(placedDll);
+            var nested = Path.Combine(folder, "customleaders");
+            if (Directory.Exists(nested))
+                Directory.Delete(nested, recursive: true);
+        }
+
+        return target;
     }
 
     private static readonly string[] DocExtensions = { ".txt", ".md", ".pdf", ".rtf", ".nfo" };
 
-    private static bool HasPayloadBeyondDllsAndDocs(string dir)
+    private static bool IsLeaderPack(string dir) =>
+        Directory.EnumerateFiles(dir, "*_clone.json").Any() ||
+        Directory.EnumerateFiles(dir, "*_replace.json").Any();
+
+    private static bool HasPayloadBeyondKnown(string dir, bool ignoreLeaderExtras)
     {
-        // Junk dirs (src/build/…) are stripped on copy anyway, so they aren't payload.
+        // Junk dirs (src/build/…) are stripped on copy anyway, so they aren't payload;
+        // a consumed customleaders/ dir (and its authoring tools/) isn't either.
         if (Directory.GetDirectories(dir).Any(d =>
-                !ExcludedDirs.Contains(Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)))
+        {
+            var n = Path.GetFileName(d);
+            if (ExcludedDirs.Contains(n, StringComparer.OrdinalIgnoreCase))
+                return false;
+            if (ignoreLeaderExtras &&
+                (n.Equals("customleaders", StringComparison.OrdinalIgnoreCase) ||
+                 n.Equals("tools", StringComparison.OrdinalIgnoreCase)))
+                return false;
             return true;
+        }))
+            return true;
+
         return Directory.GetFiles(dir).Any(f =>
             !f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) &&
             !DocExtensions.Any(e => f.EndsWith(e, StringComparison.OrdinalIgnoreCase)));

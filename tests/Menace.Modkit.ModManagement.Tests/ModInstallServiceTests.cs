@@ -67,6 +67,39 @@ public sealed class ModInstallServiceTests : IDisposable
         Assert.False(File.Exists(Path.Combine(_modsDir, "Pack.dll")));
     }
 
+    [Fact]
+    public void InstallFrom_CustomLeaderFrameworkBundle_HoistsDllAndMergesLeaderPacks()
+    {
+        // The CustomLeader zip shape: framework DLL + customleaders/<pack>/ + tools/ + README.
+        var src = Path.Combine(_gameDir, "incoming", "CustomLeader");
+        Directory.CreateDirectory(Path.Combine(src, "customleaders", "menace"));
+        Directory.CreateDirectory(Path.Combine(src, "tools"));
+        File.WriteAllText(Path.Combine(src, "MenaceCustomLeader.dll"), "melon");
+        File.WriteAllText(Path.Combine(src, "README.txt"), "docs");
+        File.WriteAllText(Path.Combine(src, "customleaders", "menace", "menace_clone.json"), @"{""nickname"":""MENACE""}");
+        File.WriteAllText(Path.Combine(src, "tools", "template.png"), "img");
+
+        new ModInstallService(_config).InstallFrom(src, "CustomLeader");
+
+        Assert.True(File.Exists(Path.Combine(_modsDir, "MenaceCustomLeader.dll")));
+        Assert.True(File.Exists(Path.Combine(_modsDir, "customleaders", "menace", "menace_clone.json")));
+        Assert.False(Directory.Exists(Path.Combine(_modsDir, "CustomLeader"))); // no leftover folder
+    }
+
+    [Fact]
+    public void InstallFrom_BareLeaderPack_InstallsUnderCustomleaders()
+    {
+        var src = Path.Combine(_gameDir, "incoming", "jane");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "jane_replace.json"), @"{""nickname"":""Jane""}");
+        File.WriteAllText(Path.Combine(src, "jane_162x162.png"), "img");
+
+        new ModInstallService(_config).InstallFrom(src, "jane");
+
+        Assert.True(File.Exists(Path.Combine(_modsDir, "customleaders", "jane", "jane_replace.json")));
+        Assert.False(Directory.Exists(Path.Combine(_modsDir, "jane")));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_gameDir, recursive: true); } catch { /* best effort */ }

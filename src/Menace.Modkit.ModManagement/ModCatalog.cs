@@ -60,6 +60,7 @@ public sealed class ModCatalog
         {
             result.AddRange(ScanModFolders(modsPath, enabled: true));
             result.AddRange(ScanLooseDlls(modsPath, enabled: true));
+            result.AddRange(ScanLeaderPacks(modsPath, enabled: true));
         }
 
         var disabledPath = DisabledPath;
@@ -67,6 +68,7 @@ public sealed class ModCatalog
         {
             result.AddRange(ScanModFolders(disabledPath, enabled: false));
             result.AddRange(ScanLooseDlls(disabledPath, enabled: false));
+            result.AddRange(ScanLeaderPacks(disabledPath, enabled: false));
         }
 
         return result;
@@ -80,6 +82,11 @@ public sealed class ModCatalog
     {
         foreach (var dir in Directory.GetDirectories(root))
         {
+            // The CustomLeader framework's content root — its children are listed
+            // individually by ScanLeaderPacks, not as one folder mod.
+            if (Path.GetFileName(dir).Equals("customleaders", StringComparison.OrdinalIgnoreCase))
+                continue;
+
             ManagedMod? mod;
             try
             {
@@ -95,6 +102,70 @@ public sealed class ModCatalog
             if (mod != null)
                 yield return mod;
         }
+    }
+
+    /// <summary>
+    /// List CustomLeader leader packs: each child folder of <c>customleaders/</c> holding
+    /// a <c>*_clone.json</c> or <c>*_replace.json</c> (read by the MenaceCustomLeader
+    /// framework). DisplayName comes from the config's <c>nickname</c> when readable.
+    /// </summary>
+    private static IEnumerable<ManagedMod> ScanLeaderPacks(string root, bool enabled)
+    {
+        var leadersRoot = Path.Combine(root, "customleaders");
+        if (!Directory.Exists(leadersRoot))
+            yield break;
+
+        foreach (var dir in Directory.GetDirectories(leadersRoot))
+        {
+            ManagedMod? mod;
+            try
+            {
+                mod = FromLeaderPack(dir, enabled);
+            }
+            catch
+            {
+                mod = null; // never let one broken pack kill the scan
+            }
+
+            if (mod != null)
+                yield return mod;
+        }
+    }
+
+    private static ManagedMod? FromLeaderPack(string dir, bool enabled)
+    {
+        var config = Directory.EnumerateFiles(dir, "*_clone.json")
+            .Concat(Directory.EnumerateFiles(dir, "*_replace.json"))
+            .FirstOrDefault();
+        if (config == null)
+            return null;
+
+        var folderName = Path.GetFileName(dir);
+        string display = folderName;
+        string author = string.Empty;
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(config));
+            if (doc.RootElement.TryGetProperty("nickname", out var nick) && nick.ValueKind == JsonValueKind.String)
+                display = nick.GetString() ?? folderName;
+            if (doc.RootElement.TryGetProperty("clone_from", out var from) && from.ValueKind == JsonValueKind.String)
+                author = (config.EndsWith("_replace.json", StringComparison.OrdinalIgnoreCase) ? "replaces " : "clones ")
+                         + from.GetString();
+        }
+        catch
+        {
+            // Unreadable config — list it by folder name so the user can still manage it.
+        }
+
+        return new ManagedMod
+        {
+            Kind = ModKind.Leader,
+            Id = "customleaders/" + folderName,
+            DisplayName = display,
+            Author = author,
+            IsEnabled = enabled,
+            Location = dir,
+        };
     }
 
     private static ManagedMod? ClassifyFolder(string dir, bool enabled) =>

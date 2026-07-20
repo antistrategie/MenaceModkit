@@ -21,6 +21,25 @@ public sealed class ModCatalogTests : IDisposable
         Directory.CreateDirectory(_modsDir);
     }
 
+    [Fact]
+    public void Scan_ListsLeaderPacks_WithNicknameAndDisabledMirror()
+    {
+        Directory.CreateDirectory(Path.Combine(_modsDir, "customleaders", "menace"));
+        File.WriteAllText(Path.Combine(_modsDir, "customleaders", "menace", "menace_clone.json"),
+            @"{""nickname"":""MENACE"",""clone_from"":""Darby""}");
+        var disabledDir = Path.Combine(_gameDir, "DisabledMods", "customleaders", "jane");
+        Directory.CreateDirectory(disabledDir);
+        File.WriteAllText(Path.Combine(disabledDir, "jane_replace.json"), @"{""nickname"":""Jane""}");
+
+        var mods = new ModCatalog(new TestModkitConfig { GameInstallPath = _gameDir }).Scan();
+
+        var menace = Assert.Single(mods, m => m.Kind == ModKind.Leader && m.IsEnabled);
+        Assert.Equal("MENACE", menace.DisplayName);
+        Assert.Equal("clones Darby", menace.Author);
+        var jane = Assert.Single(mods, m => m.Kind == ModKind.Leader && !m.IsEnabled);
+        Assert.Equal("Jane", jane.DisplayName);
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_gameDir, recursive: true); } catch { /* best effort */ }

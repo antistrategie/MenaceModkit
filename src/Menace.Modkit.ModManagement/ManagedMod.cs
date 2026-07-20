@@ -15,6 +15,13 @@ public enum ModKind
     /// <summary>A MelonLoader mod built against the Jiangyu SDK/loader.</summary>
     Jiangyu,
 
+    /// <summary>
+    /// A CustomLeader leader pack — a folder under <c>Mods/customleaders/</c> holding a
+    /// <c>{leader}_clone.json</c> or <c>{leader}_replace.json</c> plus portrait art, read
+    /// by the MenaceCustomLeader framework (itself a raw MelonMod).
+    /// </summary>
+    Leader,
+
     /// <summary>Modkit infrastructure (loader/extractor DLLs) — shown but protected from management.</summary>
     Infrastructure,
 }

@@ -43,6 +43,11 @@ public sealed class ModEnableService
 
         var name = Path.GetFileName(source);
 
+        // Preserve any nesting below the scan root (e.g. customleaders/<name> packs must
+        // disable to DisabledMods/customleaders/<name> so the catalog still finds them).
+        var currentRoot = enabled ? disabledPath : modsPath;
+        var rel = IsUnder(source, currentRoot) ? Path.GetRelativePath(currentRoot, source) : name;
+
         string target;
         if (enabled)
         {
@@ -50,17 +55,17 @@ public sealed class ModEnableService
             // A ".dll.disabled" parked in Mods/ is re-enabled by stripping the suffix in place.
             target = name.EndsWith(".dll.disabled", StringComparison.OrdinalIgnoreCase) && IsUnder(source, modsPath)
                 ? Path.Combine(modsPath, name[..^".disabled".Length])
-                : Path.Combine(modsPath, name);
+                : Path.Combine(modsPath, rel);
         }
         else
         {
-            Directory.CreateDirectory(disabledPath);
-            target = Path.Combine(disabledPath, name);
+            target = Path.Combine(disabledPath, rel);
         }
 
         if (Exists(target))
             throw new IOException($"Target already exists: '{target}'.");
 
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         Move(source, target);
     }
 
