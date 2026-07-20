@@ -98,7 +98,48 @@ public sealed class ModInstallService
     {
         var modsPath = ModsPath ?? throw new InvalidOperationException("Game install path is not set.");
         Directory.CreateDirectory(modsPath);
+
+        // A folder is only a loadable mod when a loader reads it: modpack.json
+        // (ModpackLoader) or jiangyu.json (Jiangyu). Raw MelonMods load ONLY as
+        // top-level Mods/*.dll — MelonLoader does not scan subfolders — so hoist
+        // their DLLs to the root instead of burying them in a folder nothing reads.
+        if (!HasModManifest(modRootDir))
+        {
+            var dlls = Directory.GetFiles(modRootDir, "*.dll");
+            if (dlls.Length > 0)
+            {
+                string target = string.Empty;
+                foreach (var dll in dlls)
+                    target = InstallDll(dll, modsPath);
+
+                // Keep any non-DLL payload (rare: a melon that reads its own data
+                // folder) in a named folder beside the hoisted DLLs; plain docs
+                // (readme/changelog) aren't worth a folder.
+                if (HasPayloadBeyondDllsAndDocs(modRootDir))
+                {
+                    var folder = PlaceNamed(modRootDir, modsPath, name);
+                    foreach (var placedDll in Directory.GetFiles(folder, "*.dll"))
+                        File.Delete(placedDll);
+                }
+
+                return target;
+            }
+        }
+
         return PlaceNamed(modRootDir, modsPath, name);
+    }
+
+    private static readonly string[] DocExtensions = { ".txt", ".md", ".pdf", ".rtf", ".nfo" };
+
+    private static bool HasPayloadBeyondDllsAndDocs(string dir)
+    {
+        // Junk dirs (src/build/…) are stripped on copy anyway, so they aren't payload.
+        if (Directory.GetDirectories(dir).Any(d =>
+                !ExcludedDirs.Contains(Path.GetFileName(d), StringComparer.OrdinalIgnoreCase)))
+            return true;
+        return Directory.GetFiles(dir).Any(f =>
+            !f.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) &&
+            !DocExtensions.Any(e => f.EndsWith(e, StringComparison.OrdinalIgnoreCase)));
     }
 
     /// <summary>

@@ -21,6 +21,52 @@ public sealed class ModInstallServiceTests : IDisposable
         _config = new TestModkitConfig { GameInstallPath = _gameDir };
     }
 
+    [Fact]
+    public void InstallFrom_BareMelonFolder_HoistsDllToModsRoot()
+    {
+        // Raw MelonMods only load as top-level Mods/*.dll — a bare folder (no
+        // modpack.json/jiangyu.json) must not be installed as a folder.
+        var src = Path.Combine(_gameDir, "incoming", "Mount Up");
+        Directory.CreateDirectory(Path.Combine(src, "src", "bin"));
+        File.WriteAllText(Path.Combine(src, "MountUp.dll"), "melon");
+        File.WriteAllText(Path.Combine(src, "src", "bin", "MountUp.dll"), "stale");
+        File.WriteAllText(Path.Combine(src, "README.txt"), "docs");
+
+        new ModInstallService(_config).InstallFrom(src, "Mount Up");
+
+        Assert.True(File.Exists(Path.Combine(_modsDir, "MountUp.dll")));
+        Assert.False(Directory.Exists(Path.Combine(_modsDir, "Mount Up")));
+    }
+
+    [Fact]
+    public void InstallFrom_MelonFolderWithAssets_HoistsDllAndKeepsAssetFolder()
+    {
+        var src = Path.Combine(_gameDir, "incoming", "AssetMod");
+        Directory.CreateDirectory(Path.Combine(src, "data"));
+        File.WriteAllText(Path.Combine(src, "AssetMod.dll"), "melon");
+        File.WriteAllText(Path.Combine(src, "data", "table.json"), "{}");
+
+        new ModInstallService(_config).InstallFrom(src, "AssetMod");
+
+        Assert.True(File.Exists(Path.Combine(_modsDir, "AssetMod.dll")));
+        Assert.True(File.Exists(Path.Combine(_modsDir, "AssetMod", "data", "table.json")));
+        Assert.False(File.Exists(Path.Combine(_modsDir, "AssetMod", "AssetMod.dll"))); // not duplicated
+    }
+
+    [Fact]
+    public void InstallFrom_ManifestFolder_StaysAFolder()
+    {
+        var src = Path.Combine(_gameDir, "incoming", "Pack");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "modpack.json"), @"{""name"":""Pack""}");
+        File.WriteAllText(Path.Combine(src, "Pack.dll"), "code");
+
+        new ModInstallService(_config).InstallFrom(src, "Pack");
+
+        Assert.True(File.Exists(Path.Combine(_modsDir, "Pack", "modpack.json")));
+        Assert.False(File.Exists(Path.Combine(_modsDir, "Pack.dll")));
+    }
+
     public void Dispose()
     {
         try { Directory.Delete(_gameDir, recursive: true); } catch { /* best effort */ }
