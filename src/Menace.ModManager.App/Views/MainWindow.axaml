@@ -3,7 +3,8 @@
         xmlns:vm="clr-namespace:Menace.ModManager.ViewModels"
         xmlns:mm="clr-namespace:Menace.Modkit.ModManagement;assembly=Menace.Modkit.ModManagement"
         x:Class="Menace.ModManager.Views.MainWindow"
-        Width="980" Height="680"
+        Width="1280" Height="860"
+        MinWidth="820" MinHeight="560"
         Title="Menace Mod Manager">
   <Grid DragDrop.AllowDrop="True">
 
