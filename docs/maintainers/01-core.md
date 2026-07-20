@@ -1,5 +1,12 @@
 # Menace.Modkit.Core - Maintainer Documentation
 
+> [!IMPORTANT]
+> **Superseded in v37 (2026-07).** The entire `Bundles/` subsystem documented here —
+> `BundleCompiler`, `UnityBinaryPatcher`, and the data-patch/texture bundle pipeline — has
+> been **deleted**. Modkit deploys are loose files applied at runtime; nothing bakes into
+> `resources.assets` any more. This file is kept only as a record of the former design;
+> the types it references no longer exist in the codebase.
+
 ## Overview
 
 **Menace.Modkit.Core** is the foundational library for the Menace modkit system, providing core infrastructure for game asset extraction, typetree caching, and runtime asset bundling. It serves as the bridge between raw game assets and modifiable formats.
