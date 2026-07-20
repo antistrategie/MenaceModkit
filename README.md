@@ -31,7 +31,7 @@
 ## What's Included
 
 
-**Mod Manager** — A lean, standalone app for *installing and playing with* mods (r2modman / Vortex style). Install, enable/disable and uninstall every kind of MENACE mod — modpacks, raw MelonLoader mods, Jiangyu mods and custom-leader packs — from one drag-and-drop window, and it sets up the loaders they need (MelonLoader, Modpack Loader, Jiangyu). No editors, nothing to configure. **If you just want to play with mods, this is the one.**
+**Mod Manager** — A lean, standalone app for *installing and playing with* mods (r2modman / Vortex style). Install, enable/disable and uninstall every kind of MENACE mod — modpacks, raw MelonLoader mods, Jiangyu mods and custom-leader packs — from one drag-and-drop window, and it sets up the loaders they need (MelonLoader, Modpack Loader, Jiangyu). No editors, nothing to configure. If you just want to play with mods, this is the one.
 
 <p align="center">
   <img src="img/mod-manager.png" alt="Menace Mod Manager" width="600"/>
