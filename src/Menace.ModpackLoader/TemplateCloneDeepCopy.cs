@@ -280,6 +280,13 @@ internal static class TemplateCloneDeepCopy
     /// (intentional registry sharing).
     /// </summary>
     private static bool IsOwnedElementType(Type elementType)
+        => IsOwnedElementTypeCore(elementType, typeof(DataTemplate), typeof(ScriptableObject));
+
+    // Parameterised core, factored out so tests can pass synthetic base types instead of
+    // the real game types — resolving typeof(DataTemplate) at JIT time pulls in
+    // Assembly-CSharp's Il2Cpp transitive closure, which only works at game runtime.
+    internal static bool IsOwnedElementTypeCore(
+        Type elementType, Type dataTemplateBase, Type scriptableObjectBase)
     {
         if (OwnedElementTypeCache.TryGetValue(elementType, out var cached))
             return cached;
@@ -287,9 +294,9 @@ internal static class TemplateCloneDeepCopy
         bool decision;
         try
         {
-            if (typeof(DataTemplate).IsAssignableFrom(elementType))
+            if (dataTemplateBase != null && dataTemplateBase.IsAssignableFrom(elementType))
                 decision = false;
-            else if (!typeof(ScriptableObject).IsAssignableFrom(elementType))
+            else if (scriptableObjectBase == null || !scriptableObjectBase.IsAssignableFrom(elementType))
                 decision = false;
             else
                 decision = HasStrictDescendant(elementType);
@@ -303,7 +310,7 @@ internal static class TemplateCloneDeepCopy
         return decision;
     }
 
-    private static bool HasStrictDescendant(Type baseType)
+    internal static bool HasStrictDescendant(Type baseType)
     {
         Type[] types;
         try { types = baseType.Assembly.GetTypes(); }
