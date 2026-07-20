@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
 using Menace.Modkit.App.Services; // ModLoaderInstaller (kept its original namespace when extracted)
@@ -145,6 +147,9 @@ public sealed class MainViewModel : ReactiveObject
     public bool HasError => !string.IsNullOrEmpty(_errorMessage);
     public void DismissError() => ErrorMessage = null;
 
+    /// <summary>Surface an error from outside the VM (e.g. a faulted UI event handler).</summary>
+    public void ReportError(string message) => ErrorMessage = message;
+
     public MainViewModel()
     {
         Refresh();
@@ -186,10 +191,16 @@ public sealed class MainViewModel : ReactiveObject
 
     /// <summary>
     /// Run a long operation with the busy overlay up: clears any error, shows a status,
-    /// surfaces failures as <see cref="ErrorMessage"/>, and rescans when done.
+    /// surfaces failures as <see cref="ErrorMessage"/>, and rescans when done. Reentrancy
+    /// is rejected here at the VM — the code-behind's IsBusy checks race their own awaits
+    /// (e.g. a second Ctrl+V inside the clipboard-read window), and two concurrent
+    /// installs would race ClearTarget/copy on the same target.
     /// </summary>
     private async Task ExecuteAsync(string busyStatus, Func<Task> work)
     {
+        if (IsBusy)
+            return;
+
         ErrorMessage = null;
         Status = busyStatus;
         IsBusy = true;
@@ -263,20 +274,73 @@ public sealed class MainViewModel : ReactiveObject
         Refresh();
     }
 
-    public void Refresh()
+    // Refresh coalescing state — only ever touched on the UI thread.
+    private bool _refreshRunning;
+    private bool _refreshPending;
+
+    /// <summary>
+    /// Rescan <c>Mods/</c> and update the list. The scan (file I/O + DLL metadata reads)
+    /// runs off the UI thread — inline it would visibly freeze the window on a large
+    /// Mods/ folder. Calls while a scan is running coalesce into one follow-up scan.
+    /// </summary>
+    public async void Refresh()
     {
-        // Refresh runs from the constructor and after every operation, so it must never throw
-        // (an unhandled throw here would fail app startup or fault an async handler).
+        // Refresh runs from the constructor and after every operation, so it must never
+        // throw (RefreshOnceAsync catches everything), and it must not overlap itself
+        // (two interleaved scans would double-fill the collections).
+        if (_refreshRunning)
+        {
+            _refreshPending = true;
+            return;
+        }
+
+        _refreshRunning = true;
         try
         {
+            do
+            {
+                _refreshPending = false;
+                await RefreshOnceAsync();
+            } while (_refreshPending);
+        }
+        finally
+        {
+            _refreshRunning = false;
+        }
+    }
+
+    private async Task RefreshOnceAsync()
+    {
+        try
+        {
+            var gamePath = ModkitConfig.Current.GameInstallPath;
+
+            // Everything filesystem-bound happens off-thread; only the collection and
+            // property updates run back on the UI thread.
+            var (ordered, melonInstalled, melonVersion) = await Task.Run(() =>
+            {
+                var mods = _catalog.Scan()
+                    .OrderBy(m => KindRank(m.Kind))
+                    .ThenBy(m => m.LoadOrder ?? int.MaxValue)
+                    .ThenBy(m => m.DisplayName)
+                    .ToList();
+
+                var installed = false;
+                string? version = null;
+                if (!string.IsNullOrEmpty(gamePath))
+                {
+                    // MelonLoader lives at the game root (version.dll + MelonLoader/),
+                    // not in Mods/, so query the installer rather than the scanned list.
+                    var installer = new ModLoaderInstaller(gamePath);
+                    installed = installer.IsMelonLoaderInstalled();
+                    version = installer.GetInstalledMelonLoaderVersion();
+                }
+
+                return (mods, installed, version);
+            });
+
             Mods.Clear();
             Rows.Clear();
-
-            var ordered = _catalog.Scan()
-                .OrderBy(m => KindRank(m.Kind))
-                .ThenBy(m => m.LoadOrder ?? int.MaxValue)
-                .ThenBy(m => m.DisplayName)
-                .ToList();
 
             foreach (var mod in ordered)
                 Mods.Add(mod);
@@ -294,7 +358,7 @@ public sealed class MainViewModel : ReactiveObject
                 ? "Game not located — click Locate game… (or set MENACE_GAME_PATH)."
                 : $"{Mods.Count} mod(s) — {path}";
 
-            RefreshLoaderStatuses();
+            RefreshLoaderStatuses(gamePath, melonInstalled, melonVersion);
         }
         catch (Exception ex)
         {
@@ -324,9 +388,8 @@ public sealed class MainViewModel : ReactiveObject
         _ => "OTHER",
     };
 
-    private void RefreshLoaderStatuses()
+    private void RefreshLoaderStatuses(string? gamePath, bool melonInstalled, string? melonVersion)
     {
-        var gamePath = ModkitConfig.Current.GameInstallPath;
         if (string.IsNullOrEmpty(gamePath))
         {
             MelonLoaderStatus = ModpackLoaderStatus = JiangyuLoaderStatus = "game not located";
@@ -334,13 +397,8 @@ public sealed class MainViewModel : ReactiveObject
         }
         else
         {
-            // MelonLoader lives at the game root (version.dll + MelonLoader/), not in Mods/,
-            // so query the installer rather than the scanned list.
-            var installer = new ModLoaderInstaller(gamePath);
-            var installed = installer.IsMelonLoaderInstalled();
-            var melonVersion = installer.GetInstalledMelonLoaderVersion();
-            _melonLoaderInstalledVersion = installed ? melonVersion : null;
-            MelonLoaderStatus = installed
+            _melonLoaderInstalledVersion = melonInstalled ? melonVersion : null;
+            MelonLoaderStatus = melonInstalled
                 ? $"installed{(string.IsNullOrEmpty(melonVersion) ? "" : $" {melonVersion}")}"
                 : "not installed";
 
@@ -394,7 +452,8 @@ public sealed class MainViewModel : ReactiveObject
         catch (Exception ex)
         {
             ErrorMessage = $"Couldn't toggle {mod.DisplayName}: {ex.Message}";
-            return;
+            // Fall through to Refresh: the checkbox flipped visually on click, so the
+            // list must be re-read to show the on-disk truth again.
         }
 
         Refresh();
@@ -405,13 +464,46 @@ public sealed class MainViewModel : ReactiveObject
     /// bare .dll, and works out for itself whether the mod needs compiling: a modpack with C#
     /// sources is compiled and deployed; everything else is copied straight in.
     /// </summary>
-    public Task InstallAsync(string path)
+    public Task InstallAsync(string path) => InstallManyAsync(new[] { path });
+
+    /// <summary>
+    /// Install a batch (multi-file drop/paste) as ONE operation: per-file failures are
+    /// collected and surfaced together at the end. Running them as separate operations
+    /// meant each cleared <see cref="ErrorMessage"/> on start, so a failure on file 1
+    /// silently vanished when file 2 succeeded.
+    /// </summary>
+    public Task InstallManyAsync(IReadOnlyList<string> paths)
     {
+        if (paths.Count == 0)
+            return Task.CompletedTask;
+
         // Progress must be created on the UI thread so its callbacks marshal Status back.
         var progress = new Progress<string>(s => Status = s);
-        return ExecuteAsync(
-            $"Installing {System.IO.Path.GetFileName(path)}…",
-            () => Task.Run(() => InstallCoreAsync(path, progress)));
+        var busyStatus = paths.Count == 1
+            ? $"Installing {System.IO.Path.GetFileName(paths[0])}…"
+            : $"Installing {paths.Count} mods…";
+
+        return ExecuteAsync(busyStatus, async () =>
+        {
+            var failures = new List<string>();
+            foreach (var path in paths)
+            {
+                try
+                {
+                    await Task.Run(() => InstallCoreAsync(path, progress));
+                }
+                catch (Exception ex)
+                {
+                    failures.Add($"{System.IO.Path.GetFileName(path)}: {ex.Message}");
+                }
+            }
+
+            if (failures.Count == 1 && paths.Count == 1)
+                throw new InvalidOperationException(failures[0]);
+            if (failures.Count > 0)
+                throw new InvalidOperationException(
+                    $"{failures.Count} of {paths.Count} installs failed:\n" + string.Join("\n", failures));
+        });
     }
 
     private async Task InstallCoreAsync(string path, IProgress<string> progress)

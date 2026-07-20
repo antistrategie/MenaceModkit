@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using Avalonia.Controls;
 using Avalonia.Input;
+using Avalonia.Input.Platform;
 using Avalonia.Interactivity;
 using Avalonia.Markup.Xaml;
 using Avalonia.Platform.Storage;
@@ -15,6 +16,8 @@ namespace Menace.ModManager.Views;
 
 public partial class MainWindow : Window
 {
+    private bool _forceClose;
+
     public MainWindow()
     {
         AvaloniaXamlLoader.Load(this);
@@ -26,6 +29,48 @@ public partial class MainWindow : Window
         // delivers drags to this (X11) window, but the clipboard bridge is reliable —
         // copy a file in the file manager, Ctrl+V here.
         AddHandler(KeyDownEvent, OnKeyDown);
+        Closing += OnClosing;
+    }
+
+    private MainViewModel? Vm => DataContext as MainViewModel;
+
+    /// <summary>
+    /// Run an async UI handler with a crash guard: an exception escaping an
+    /// <c>async void</c> handler rethrows on the sync context and kills the process,
+    /// so surface it in the error banner instead.
+    /// </summary>
+    private async Task GuardedAsync(Func<Task> action)
+    {
+        try
+        {
+            await action();
+        }
+        catch (Exception ex)
+        {
+            Vm?.ReportError($"Unexpected error: {ex.Message}");
+        }
+    }
+
+    // Closing mid-install would kill background copy/extract threads mid-write; make the
+    // user opt into that explicitly. (Installs swap complete trees into place, so the
+    // damage is bounded — but a busy exit is still never what they meant to do.)
+    private void OnClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (_forceClose || Vm is not { IsBusy: true })
+            return;
+
+        e.Cancel = true;
+        _ = GuardedAsync(async () =>
+        {
+            var confirmed = await new ConfirmDialog(
+                "An operation is still running.\n\nQuitting now may leave it unfinished. Quit anyway?")
+                .ShowDialog<bool>(this);
+            if (confirmed)
+            {
+                _forceClose = true;
+                Close();
+            }
+        });
     }
 
     private async void OnKeyDown(object? sender, KeyEventArgs e)
@@ -35,12 +80,48 @@ public partial class MainWindow : Window
         if (Vm is not { IsBusy: false } vm)
             return;
 
-        var text = await (Clipboard?.GetTextAsync() ?? Task.FromResult<string?>(null));
-        foreach (var path in ParsePathsFromText(text))
-            await vm.InstallAsync(path);
+        await GuardedAsync(async () =>
+        {
+            var paths = await GetClipboardPathsAsync();
+            if (paths.Count > 0)
+                await vm.InstallManyAsync(paths);
+        });
     }
 
-    private MainViewModel? Vm => DataContext as MainViewModel;
+    /// <summary>
+    /// Local paths on the clipboard: real file objects when the platform exposes them
+    /// (Windows Explorer copy carries no text at all), otherwise text parsed as a
+    /// uri-list / plain paths.
+    /// </summary>
+    private async Task<List<string>> GetClipboardPathsAsync()
+    {
+        var paths = new List<string>();
+        if (Clipboard is not { } clipboard)
+            return paths;
+
+        try
+        {
+            var files = await clipboard.TryGetFilesAsync();
+            if (files is not null)
+            {
+                foreach (var item in files)
+                {
+                    var path = item.TryGetLocalPath();
+                    if (!string.IsNullOrEmpty(path))
+                        paths.Add(path);
+                }
+            }
+        }
+        catch
+        {
+            // Some platforms don't expose file objects on the clipboard — text fallback below.
+        }
+
+        if (paths.Count > 0)
+            return paths;
+
+        return ParsePathsFromText(await clipboard.TryGetTextAsync());
+    }
 
     private void OnDragEnter(object? sender, DragEventArgs e)
     {
@@ -68,8 +149,10 @@ public partial class MainWindow : Window
             return;
 
         Console.WriteLine($"[dnd] Drop received, formats: {string.Join(", ", e.DataTransfer?.Formats.Select(f => f.ToString()) ?? new[] { "(none)" })}");
-        foreach (var path in ExtractDroppedPaths(e))
-            await vm.InstallAsync(path);
+        // Paths must be extracted synchronously within the drop event; the batch installs
+        // as one operation so a failure in one file isn't hidden by the next succeeding.
+        var paths = ExtractDroppedPaths(e);
+        await GuardedAsync(() => vm.InstallManyAsync(paths));
     }
 
     /// <summary>
@@ -98,8 +181,8 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Parse a uri-list / newline-separated path payload (file:// URIs or absolute
-    /// paths) into existing local paths.
+    /// Parse a uri-list / newline-separated path payload (file:// URIs, absolute Unix
+    /// paths, or drive-letter Windows paths) into existing local paths.
     /// </summary>
     private static List<string> ParsePathsFromText(string? text)
     {
@@ -118,6 +201,8 @@ public partial class MainWindow : Window
                 path = uri.LocalPath;
             else if (raw.StartsWith('/'))
                 path = raw;
+            else if (raw.Length >= 3 && char.IsAsciiLetter(raw[0]) && raw[1] == ':' && raw[2] is '\\' or '/')
+                path = raw; // Windows drive-letter path (pasted "C:\...\mod.zip" text)
 
             if (!string.IsNullOrEmpty(path) && (File.Exists(path) || Directory.Exists(path)))
                 paths.Add(path);
@@ -130,15 +215,18 @@ public partial class MainWindow : Window
 
     private async void OnLocateGameClick(object? sender, RoutedEventArgs e)
     {
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+        await GuardedAsync(async () =>
         {
-            Title = "Select the MENACE install folder (contains Menace.exe)",
-            AllowMultiple = false,
-        });
+            var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions
+            {
+                Title = "Select the MENACE install folder (contains Menace.exe)",
+                AllowMultiple = false,
+            });
 
-        var path = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
-        if (!string.IsNullOrEmpty(path))
-            Vm?.SetGamePath(path);
+            var path = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+            if (!string.IsNullOrEmpty(path))
+                Vm?.SetGamePath(path);
+        });
     }
 
     private void OnDismissErrorClick(object? sender, RoutedEventArgs e) => Vm?.DismissError();
@@ -151,41 +239,44 @@ public partial class MainWindow : Window
 
     private async void OnInstallClick(object? sender, RoutedEventArgs e)
     {
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        await GuardedAsync(async () =>
         {
-            Title = "Select a mod archive or DLL to install",
-            AllowMultiple = false,
-            FileTypeFilter = new[]
+            var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
             {
-                new FilePickerFileType("Mods (archive or DLL)")
+                Title = "Select a mod archive or DLL to install",
+                AllowMultiple = false,
+                FileTypeFilter = new[]
                 {
-                    Patterns = new[] { "*.zip", "*.7z", "*.rar", "*.tar", "*.tar.gz", "*.tgz", "*.dll" },
+                    new FilePickerFileType("Mods (archive or DLL)")
+                    {
+                        Patterns = new[] { "*.zip", "*.7z", "*.rar", "*.tar", "*.tar.gz", "*.tgz", "*.dll" },
+                    },
+                    FilePickerFileTypes.All,
                 },
-                FilePickerFileTypes.All,
-            },
-        });
+            });
 
-        var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
-        if (!string.IsNullOrEmpty(path) && Vm is { } vm)
-            await vm.InstallAsync(path);
+            var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
+            if (!string.IsNullOrEmpty(path) && Vm is { } vm)
+                await vm.InstallAsync(path);
+        });
     }
 
     private async void OnGetJiangyuClick(object? sender, RoutedEventArgs e)
     {
         if (Vm is { } vm)
-            await vm.InstallJiangyuLoaderAsync();
+            await GuardedAsync(vm.InstallJiangyuLoaderAsync);
     }
 
     private async void OnInstallMelonLoaderClick(object? sender, RoutedEventArgs e)
     {
         if (Vm is { } vm)
-            await vm.InstallMelonLoaderAsync();
+            await GuardedAsync(vm.InstallMelonLoaderAsync);
     }
 
     private async void OnInstallModpackLoaderClick(object? sender, RoutedEventArgs e)
     {
         if (Vm is { } vm)
-            await vm.InstallModpackLoaderAsync();
+            await GuardedAsync(vm.InstallModpackLoaderAsync);
     }
 
     private async void OnUninstallClick(object? sender, RoutedEventArgs e)
@@ -199,11 +290,14 @@ public partial class MainWindow : Window
             return;
         }
 
-        var confirmed = await new ConfirmDialog(
-            $"Delete \"{mod.DisplayName}\" from disk?\n\nThis removes its files and cannot be undone.")
-            .ShowDialog<bool>(this);
+        await GuardedAsync(async () =>
+        {
+            var confirmed = await new ConfirmDialog(
+                $"Delete \"{mod.DisplayName}\" from disk?\n\nThis removes its files and cannot be undone.")
+                .ShowDialog<bool>(this);
 
-        if (confirmed)
-            await Vm.UninstallSelectedAsync();
+            if (confirmed && Vm is { } vm)
+                await vm.UninstallSelectedAsync();
+        });
     }
 }

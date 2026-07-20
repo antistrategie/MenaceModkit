@@ -38,8 +38,10 @@ public sealed class StandaloneModkitConfig : IModkitConfig
 
     private static string? DetectGamePath()
     {
+        // Same validation as SetGamePath: an existing-but-wrong folder would make the
+        // app happily create and manage a Mods/ directory somewhere meaningless.
         var env = Environment.GetEnvironmentVariable("MENACE_GAME_PATH");
-        if (!string.IsNullOrEmpty(env) && Directory.Exists(env))
+        if (GameLocator.LooksLikeGameDir(env))
             return env;
 
         var saved = LoadSavedPath();
