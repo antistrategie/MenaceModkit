@@ -15,9 +15,10 @@ namespace Menace.Modkit.App.Services;
 /// <summary>
 /// Owns the game's Mods/ folder. Deploys are loose files only (shared ModDeployService:
 /// compile → copy → runtime manifest); the runtime loader applies patches, registers
-/// clones and loads loose assets, so no game files are ever patched. Undeploy retains a
-/// legacy restore of resources.assets/globalgamemanagers from .original backups left by
-/// older Modkit versions that baked into game files.
+/// clones and loads loose assets, so no game files are ever patched. This version never
+/// writes to game files — if it detects a pre-v37 baked install (leftover .original
+/// backups that differ from the live files) it warns the user to verify game files in
+/// Steam rather than restoring them itself.
 /// </summary>
 public class DeployManager
 {
@@ -53,8 +54,11 @@ public class DeployManager
 
         try
         {
-            // One-time legacy un-bake for installs upgraded from pre-loose-deploy versions.
-            await Task.Run(RestoreLegacyBakeIfNeeded, ct);
+            // Warn (read-only) if this install still has baked game files from a pre-v37
+            // Modkit — we never overwrite game files, so tell the user to verify in Steam.
+            var legacyWarning = await Task.Run(DetectLegacyBake, ct);
+            if (legacyWarning != null)
+                progress?.Report(legacyWarning);
 
             // Refresh runtime DLLs from the bundled directory, then deploy them first so
             // ModpackLoader.dll is available as a compile reference.
@@ -72,7 +76,13 @@ public class DeployManager
 
             ModkitLog.Info($"Deployed {modpack.Name} to {modsBasePath}");
             progress?.Report($"Deployed {modpack.Name}");
-            return new DeployResult { Success = true, Message = $"Deployed {modpack.Name}", DeployedCount = 1 };
+            return new DeployResult
+            {
+                Success = true,
+                Message = legacyWarning == null ? $"Deployed {modpack.Name}" : $"Deployed {modpack.Name}. ⚠ {legacyWarning}",
+                Warning = legacyWarning,
+                DeployedCount = 1,
+            };
         }
         catch (OperationCanceledException)
         {
@@ -113,8 +123,11 @@ public class DeployManager
 
         try
         {
-            // One-time legacy un-bake for installs upgraded from pre-loose-deploy versions.
-            await Task.Run(RestoreLegacyBakeIfNeeded, ct);
+            // Warn (read-only) if this install still has baked game files from a pre-v37
+            // Modkit — we never overwrite game files, so tell the user to verify in Steam.
+            var legacyWarning = await Task.Run(DetectLegacyBake, ct);
+            if (legacyWarning != null)
+                progress?.Report(legacyWarning);
 
             // Remove modkit-deployed modpacks that are no longer in staging. Ownership
             // comes from the deployedBy marker in each dir's runtime manifest (stateless);
@@ -177,7 +190,13 @@ public class DeployManager
             state.SaveTo(DeployStateFilePath);
 
             progress?.Report($"Deployed {total} modpack(s) successfully");
-            return new DeployResult { Success = true, Message = $"Deployed {total} modpack(s)", DeployedCount = total };
+            return new DeployResult
+            {
+                Success = true,
+                Message = legacyWarning == null ? $"Deployed {total} modpack(s)" : $"Deployed {total} modpack(s). ⚠ {legacyWarning}",
+                Warning = legacyWarning,
+                DeployedCount = total,
+            };
         }
         catch (OperationCanceledException)
         {
@@ -280,9 +299,11 @@ public class DeployManager
                 }
             }, ct);
 
-            // Restore original game data files
-            progress?.Report("Restoring original game data...");
-            await Task.Run(() => RestoreOriginalGameData(modsBasePath), ct);
+            // v37 never patches game files, so there is nothing to restore. If this install
+            // still carries baked files from an old Modkit, point the user at Steam's verify.
+            var legacyWarning = await Task.Run(DetectLegacyBake, ct);
+            if (legacyWarning != null)
+                progress?.Report(legacyWarning);
 
             // Clear deploy state
             var emptyState = new DeployState();
@@ -295,7 +316,12 @@ public class DeployManager
             GC.Collect();
 
             progress?.Report("All mods undeployed");
-            return new DeployResult { Success = true, Message = "All mods undeployed" };
+            return new DeployResult
+            {
+                Success = true,
+                Message = legacyWarning == null ? "All mods undeployed" : $"All mods undeployed. ⚠ {legacyWarning}",
+                Warning = legacyWarning,
+            };
         }
         catch (Exception ex)
         {
@@ -498,10 +524,6 @@ public class DeployManager
     }
 
     /// <summary>
-    /// Restore original game data files from backups.
-    /// Verifies backup integrity using BackupMetadata before restoring.
-    /// </summary>
-    /// <summary>
     /// Update (or insert) one modpack's entry in the informational deploy state after a
     /// single deploy, so change tracking doesn't drift until the next Deploy All.
     /// </summary>
@@ -559,30 +581,28 @@ public class DeployManager
     }
 
     /// <summary>
-    /// One-time legacy un-bake: pre-v37 deploys copied patched <c>resources.assets</c>/
-    /// <c>globalgamemanagers</c> over the game's files. Loose deploys never touch game
-    /// files, so an upgraded install would otherwise keep those stale baked mods forever
-    /// (on top of the runtime patches). If <c>.original</c> backups exist and the live
-    /// files differ from them, restore vanilla once; a marker file skips the (hash-heavy)
-    /// check on every later deploy.
+    /// Read-only check for a pre-v37 <em>baked</em> install: older Modkit versions wrote
+    /// patched <c>resources.assets</c>/<c>globalgamemanagers</c> over the game's own files.
+    /// v37 deploys are loose files only and never touch game data, so an upgraded install
+    /// would silently keep that stale baked content underneath the runtime patches. We do
+    /// NOT try to restore it (that would overwrite game files); instead we detect the state
+    /// — <c>.original</c> backups exist and the live file differs from its backup — and
+    /// return a warning telling the user to let Steam restore vanilla. Returns null when
+    /// nothing is baked (the common case). Self-clearing: once the user verifies files, the
+    /// live file matches vanilla again and the warning stops. Never throws.
     /// </summary>
-    private void RestoreLegacyBakeIfNeeded()
+    private string? DetectLegacyBake()
     {
         try
         {
             var gameInstallPath = _modpackManager.GetGameInstallPath();
             if (string.IsNullOrEmpty(gameInstallPath))
-                return;
+                return null;
 
             var gameDataDir = Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
             if (string.IsNullOrEmpty(gameDataDir))
-                return;
+                return null;
 
-            var marker = Path.Combine(gameDataDir, ".modkit-unbaked");
-            if (File.Exists(marker))
-                return;
-
-            var needsRestore = false;
             foreach (var name in new[] { "resources.assets", "globalgamemanagers" })
             {
                 var currentPath = Path.Combine(gameDataDir, name);
@@ -590,159 +610,27 @@ public class DeployManager
                 if (!File.Exists(backupPath) || !File.Exists(currentPath))
                     continue;
 
-                // Cheap length check first; equal lengths get a one-time hash compare.
+                // Cheap length check first; equal lengths get a hash compare.
                 if (new FileInfo(currentPath).Length != new FileInfo(backupPath).Length
                     || !string.Equals(
                         DeployState.ComputeFileHash(currentPath),
                         DeployState.ComputeFileHash(backupPath),
                         StringComparison.OrdinalIgnoreCase))
                 {
-                    needsRestore = true;
-                    break;
+                    ModkitLog.Warn("[DeployManager] Legacy baked game files detected (pre-v37 install)");
+                    return "This install has modified game files from an older Modkit version. " +
+                        "Verify game files in Steam (right-click MENACE → Properties → Installed Files → " +
+                        "Verify integrity) before playing, or those old baked mods will stack under the new loader.";
                 }
             }
 
-            if (needsRestore)
-            {
-                ModkitLog.Info("[DeployManager] Legacy baked game files detected (pre-v37 install) — restoring vanilla from .original backups (one-time)");
-                RestoreOriginalGameData(_modpackManager.ModsBasePath ?? string.Empty);
-            }
-
-            File.WriteAllText(marker,
-                "Written by the MENACE Modkit after verifying this install carries no legacy baked game files.\n" +
-                "v37+ deploys are loose files only and never patch game data. Safe to delete.\n");
+            return null;
         }
         catch (Exception ex)
         {
-            // No marker written → the check simply runs again on the next deploy.
-            ModkitLog.Warn($"[DeployManager] Legacy bake check failed (will retry next deploy): {ex.Message}");
+            ModkitLog.Warn($"[DeployManager] Legacy bake check failed: {ex.Message}");
+            return null;
         }
-    }
-
-    private void RestoreOriginalGameData(string modsBasePath)
-    {
-        ModkitLog.Info("[DeployManager] RestoreOriginalGameData starting...");
-
-        var gameInstallPath = _modpackManager.GetGameInstallPath();
-        if (string.IsNullOrEmpty(gameInstallPath))
-        {
-            ModkitLog.Warn("[DeployManager] RestoreOriginalGameData: gameInstallPath is empty, cannot restore");
-            return;
-        }
-
-        ModkitLog.Info($"[DeployManager] RestoreOriginalGameData: gameInstallPath = {gameInstallPath}");
-
-        var gameDataDir = Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
-        if (string.IsNullOrEmpty(gameDataDir))
-        {
-            ModkitLog.Warn($"[DeployManager] RestoreOriginalGameData: No *_Data directory found in {gameInstallPath}");
-            return;
-        }
-
-        ModkitLog.Info($"[DeployManager] RestoreOriginalGameData: gameDataDir = {gameDataDir}");
-
-        // Load backup metadata for hash verification
-        var backupMetadata = BackupMetadata.LoadFrom(gameDataDir);
-        if (backupMetadata != null)
-        {
-            ModkitLog.Info($"[DeployManager] Found backup metadata: version={backupMetadata.GameVersion}, " +
-                $"created={backupMetadata.BackupCreatedAt:yyyy-MM-dd HH:mm}, files={backupMetadata.FileHashes.Count}");
-        }
-        else
-        {
-            ModkitLog.Warn("[DeployManager] No backup metadata found - proceeding with size-based validation only");
-        }
-
-        // Files to restore
-        var filesToRestore = new[] { "resources.assets", "globalgamemanagers" };
-
-        // Expected minimum sizes for validation (vanilla game files)
-        var expectedMinSizes = new Dictionary<string, long>
-        {
-            { "resources.assets", 500 * 1024 * 1024 }, // ~518MB for vanilla
-            { "globalgamemanagers", 5 * 1024 * 1024 }  // ~6MB for vanilla
-        };
-
-        foreach (var originalName in filesToRestore)
-        {
-            var originalPath = Path.Combine(gameDataDir, originalName);
-            var backupPath = Path.Combine(gameDataDir, originalName + ".original");
-
-            if (File.Exists(backupPath))
-            {
-                try
-                {
-                    var backupSize = new FileInfo(backupPath).Length;
-
-                    // Validate backup isn't corrupted (too small)
-                    if (expectedMinSizes.TryGetValue(originalName, out var minSize) && backupSize < minSize)
-                    {
-                        ModkitLog.Error($"[DeployManager] Backup {originalName}.original appears corrupted: {backupSize / 1024 / 1024}MB (expected >{minSize / 1024 / 1024}MB). Use Steam to verify game files, then use Clean Redeploy.");
-                        continue;
-                    }
-
-                    // Verify hash against metadata if available
-                    bool hashVerified = false;
-                    if (backupMetadata != null && backupMetadata.FileHashes.TryGetValue(originalName, out var expectedHash))
-                    {
-                        ModkitLog.Info($"[DeployManager] Verifying backup hash for {originalName}...");
-                        var actualHash = DeployState.ComputeFileHash(backupPath);
-                        if (string.Equals(actualHash, expectedHash, StringComparison.OrdinalIgnoreCase))
-                        {
-                            ModkitLog.Info($"[DeployManager] Backup hash verified: {originalName} matches metadata");
-                            hashVerified = true;
-                        }
-                        else
-                        {
-                            // CRITICAL: Do NOT restore corrupted backups - this could damage the game installation
-                            ModkitLog.Error($"[DeployManager] Backup hash mismatch for {originalName}! " +
-                                $"Expected: {expectedHash[..16]}..., Actual: {actualHash[..16]}... " +
-                                "SKIPPING restore - backup may be corrupted. Use Steam to verify game files.");
-                            continue;
-                        }
-                    }
-
-                    ModkitLog.Info($"[DeployManager] Restoring original: {originalName}.original ({backupSize / 1024 / 1024}MB) -> {originalName}");
-                    File.Copy(backupPath, originalPath, overwrite: true);
-
-                    // Verify restored file
-                    var restoredSize = new FileInfo(originalPath).Length;
-                    if (restoredSize != backupSize)
-                    {
-                        ModkitLog.Error($"[DeployManager] Restore verification failed for {originalName}: " +
-                            $"size mismatch (backup={backupSize}, restored={restoredSize})");
-                    }
-                    else if (hashVerified || backupMetadata == null)
-                    {
-                        ModkitLog.Info($"[DeployManager] Restored {originalName}: {restoredSize / 1024 / 1024}MB (verified)");
-                    }
-                    else
-                    {
-                        // Verify hash of restored file if metadata exists
-                        var restoredHash = DeployState.ComputeFileHash(originalPath);
-                        if (backupMetadata.FileHashes.TryGetValue(originalName, out var expectedRestoredHash) &&
-                            string.Equals(restoredHash, expectedRestoredHash, StringComparison.OrdinalIgnoreCase))
-                        {
-                            ModkitLog.Info($"[DeployManager] Restored {originalName}: {restoredSize / 1024 / 1024}MB (hash verified after copy)");
-                        }
-                        else
-                        {
-                            ModkitLog.Info($"[DeployManager] Restored {originalName}: {restoredSize / 1024 / 1024}MB");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    ModkitLog.Error($"[DeployManager] Failed to restore {originalName}: {ex.Message}");
-                }
-            }
-            else
-            {
-                ModkitLog.Warn($"[DeployManager] No backup found for {originalName} at {backupPath}");
-            }
-        }
-
-        ModkitLog.Info("[DeployManager] RestoreOriginalGameData complete");
     }
 }
 
@@ -750,5 +638,12 @@ public class DeployResult
 {
     public bool Success { get; set; }
     public string Message { get; set; } = string.Empty;
+
+    /// <summary>
+    /// A non-fatal advisory shown to the user even on success (e.g. a pre-v37 baked
+    /// install that should be verified in Steam). Null when there's nothing to flag.
+    /// </summary>
+    public string? Warning { get; set; }
+
     public int DeployedCount { get; set; }
 }
