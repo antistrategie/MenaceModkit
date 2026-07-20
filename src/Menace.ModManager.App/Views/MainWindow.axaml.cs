@@ -25,7 +25,14 @@ public partial class MainWindow : Window
 
     private MainViewModel? Vm => DataContext as MainViewModel;
 
-    private void OnDragEnter(object? sender, DragEventArgs e) => SetEffect(e);
+    private void OnDragEnter(object? sender, DragEventArgs e)
+    {
+        // Diagnostic for Wayland/XWayland DnD issues: if this line never prints, the drag
+        // is not reaching the window at all (compositor-level gap, not an app bug).
+        Console.WriteLine($"[dnd] DragEnter formats: {string.Join(", ", e.DataTransfer?.Formats.Select(f => f.ToString()) ?? new[] { "(none)" })}");
+        SetEffect(e);
+    }
+
     private void OnDragOver(object? sender, DragEventArgs e) => SetEffect(e);
 
     // Accept the drag if it carries files — or text, since some Linux file managers
@@ -43,6 +50,7 @@ public partial class MainWindow : Window
         if (Vm is not { IsBusy: false } vm)
             return;
 
+        Console.WriteLine($"[dnd] Drop received, formats: {string.Join(", ", e.DataTransfer?.Formats.Select(f => f.ToString()) ?? new[] { "(none)" })}");
         foreach (var path in ExtractDroppedPaths(e))
             await vm.InstallAsync(path);
     }
