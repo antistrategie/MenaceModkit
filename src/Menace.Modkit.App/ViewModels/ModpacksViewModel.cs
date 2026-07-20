@@ -122,6 +122,7 @@ public sealed class ModpacksViewModel : ViewModelBase
         {
             this.RaiseAndSetIfChanged(ref _selectedModpack, value);
             this.RaisePropertyChanged(nameof(DeployToggleText));
+            this.RaisePropertyChanged(nameof(CanUninstallSelected));
             value?.RefreshStatsPatches();
             if (!Equals(_selectedListRow, value))
             {
@@ -172,8 +173,25 @@ public sealed class ModpacksViewModel : ViewModelBase
         }
     }
 
-    public string DeployToggleText =>
-        SelectedModpack?.IsDeployed == true ? "Undeploy" : "Deploy to Game";
+    public string DeployToggleText
+    {
+        get
+        {
+            var m = SelectedModpack;
+            if (m == null)
+                return "Deploy to Game";
+            // Installed mods (Jiangyu/DLL/leader/modpack already in Mods/) toggle enabled
+            // state; only staging modpacks "deploy".
+            if (m.IsExternalMod)
+                return m.IsDeployed ? "Disable" : "Enable";
+            return m.IsDeployed ? "Undeploy" : "Deploy to Game";
+        }
+    }
+
+    /// <summary>True when the selected item can be uninstalled (an installed mod, not a
+    /// staging modpack or a protected infrastructure mod).</summary>
+    public bool CanUninstallSelected =>
+        SelectedModpack?.Source is { CanToggle: true };
 
     private static readonly HashSet<string> InfrastructureDlls = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -480,6 +498,30 @@ public sealed class ModpacksViewModel : ViewModelBase
             SelectedModpack = AllModpacks.FirstOrDefault();
             DeployStatus = $"Deleted: {name}";
             LoadOrderVM.Refresh();
+        }
+    }
+
+    /// <summary>
+    /// Uninstall the selected <em>installed</em> mod: delete it from <c>Mods/</c> (or
+    /// <c>DisabledMods/</c>) via the kind-aware installer — the same thing the standalone
+    /// manager's "Uninstall selected" does. No-op for staging modpacks (use Delete) and
+    /// protected infrastructure mods.
+    /// </summary>
+    public void UninstallSelectedMod()
+    {
+        if (SelectedModpack?.Source is not { } mod)
+            return;
+
+        try
+        {
+            _installService.Uninstall(mod);
+            DeployStatus = $"Uninstalled: {mod.DisplayName}";
+            RefreshModpacks();
+        }
+        catch (Exception ex)
+        {
+            DeployStatus = $"Uninstall failed: {ex.Message}";
+            ModkitLog.Error($"[ModpacksViewModel] Uninstall failed for '{mod.DisplayName}': {ex}");
         }
     }
 

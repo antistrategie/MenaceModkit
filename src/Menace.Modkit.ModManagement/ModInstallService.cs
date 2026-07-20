@@ -79,9 +79,10 @@ public sealed class ModInstallService
         return InstallFrom(sourceDir, name);
     }
 
-    private static string InstallDll(string dllPath, string modsPath)
+    private string InstallDll(string dllPath, string modsPath)
     {
         var target = PrepareTarget(modsPath, Path.GetFileName(dllPath));
+        ClearDisabledMirror(target);
         File.Copy(dllPath, target, overwrite: true);
         return target;
     }
@@ -297,6 +298,30 @@ public sealed class ModInstallService
             File.Delete(target);
     }
 
+    /// <summary>
+    /// Remove any <em>disabled</em> copy of the mod being installed, so re-installing a
+    /// currently-disabled mod supersedes it instead of leaving an orphan in
+    /// <c>DisabledMods/</c> (which the catalog would then list as a duplicate). Covers the
+    /// sibling-move form (<c>DisabledMods/&lt;rel&gt;</c>) and the legacy in-place form
+    /// (<c>Mods/&lt;name&gt;.dll.disabled</c>).
+    /// </summary>
+    private void ClearDisabledMirror(string modsTarget)
+    {
+        var gameDir = _config.GameInstallPath;
+        var modsPath = ModsPath;
+        if (string.IsNullOrEmpty(gameDir) || string.IsNullOrEmpty(modsPath))
+            return;
+
+        var rel = Path.GetRelativePath(modsPath, modsTarget);
+        if (string.IsNullOrEmpty(rel) || rel.StartsWith("..", StringComparison.Ordinal))
+            return; // target not under Mods/
+
+        ClearTarget(Path.Combine(gameDir, "DisabledMods", rel));
+
+        if (modsTarget.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
+            ClearTarget(modsTarget + ".disabled");
+    }
+
     /// <summary>Copy a mod folder into <c>Mods/&lt;name&gt;</c> (clean replace, junk stripped, guarded).</summary>
     private string PlaceNamed(string sourceDir, string modsPath, string name)
     {
@@ -320,6 +345,7 @@ public sealed class ModInstallService
         {
             CopyDirectory(sourceDir, staging, isRoot: true);
             ClearTarget(target);
+            ClearDisabledMirror(target);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             Directory.Move(staging, target);
         }

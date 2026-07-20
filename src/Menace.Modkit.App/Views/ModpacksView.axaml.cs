@@ -1295,6 +1295,39 @@ public class ModpacksView : UserControl
       new Avalonia.Data.Binding("SelectedModpack.IsStandalone") { Converter = InvertBoolConverter });
     buttonPanel.Children.Add(deleteButton);
 
+    // Uninstall — for mods already installed in Mods/ (Jiangyu, DLLs, leader packs,
+    // installed modpacks). Deletes the mod from disk, like the standalone manager.
+    var uninstallButton = new Button
+    {
+      Content = "Uninstall"
+    };
+    uninstallButton.Classes.Add("destructive");
+    uninstallButton.Click += async (_, _) =>
+    {
+      if (DataContext is ModpacksViewModel vm && vm.SelectedModpack?.Source is { } mod)
+      {
+        var topLevel = TopLevel.GetTopLevel(this);
+        if (topLevel is not Window window) return;
+
+        var confirmed = await ConfirmationDialog.ShowAsync(
+          window,
+          "Uninstall Mod",
+          $"Delete '{mod.DisplayName}' from disk? This removes its files and cannot be undone.",
+          "Uninstall",
+          isDestructive: true
+        );
+
+        if (confirmed)
+          vm.UninstallSelectedMod();
+      }
+    };
+    uninstallButton.Bind(Button.IsEnabledProperty,
+      new Avalonia.Data.Binding("IsDeploying") { Converter = InvertBoolConverter });
+    // Show Uninstall only for installed mods (not staging modpacks / protected infra).
+    uninstallButton.Bind(Button.IsVisibleProperty,
+      new Avalonia.Data.Binding("CanUninstallSelected"));
+    buttonPanel.Children.Add(uninstallButton);
+
     mainStack.Children.Add(buttonPanel);
 
     // Global deployment section moved to footer

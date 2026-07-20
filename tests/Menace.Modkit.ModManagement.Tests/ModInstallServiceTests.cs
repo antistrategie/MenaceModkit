@@ -195,6 +195,44 @@ namespace M { public class E { } }");
     }
 
     [Fact]
+    public void Install_WhileDisabled_ReplacesTheDisabledCopy_NoDuplicate()
+    {
+        // A folder mod (jiangyu.json) currently sitting in DisabledMods/ must not survive a
+        // re-install into Mods/ — otherwise the catalog lists it twice (enabled + disabled).
+        var disabled = Path.Combine(_gameDir, "DisabledMods", "WOMENACE");
+        Directory.CreateDirectory(disabled);
+        File.WriteAllText(Path.Combine(disabled, "jiangyu.json"), "{}");
+
+        var src = Path.Combine(_gameDir, "incoming", "WOMENACE");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "jiangyu.json"), "{}");
+
+        new ModInstallService(_config).InstallFrom(src, "WOMENACE");
+
+        Assert.True(Directory.Exists(Path.Combine(_modsDir, "WOMENACE")));
+        Assert.False(Directory.Exists(disabled)); // the disabled copy is gone
+    }
+
+    [Fact]
+    public void InstallDll_WhileDisabled_ClearsSiblingAndInPlaceDisabledCopies()
+    {
+        var disabledSibling = Path.Combine(_gameDir, "DisabledMods", "Raw.dll");
+        Directory.CreateDirectory(Path.GetDirectoryName(disabledSibling)!);
+        File.WriteAllText(disabledSibling, "old");
+        var inPlace = Path.Combine(_modsDir, "Raw.dll.disabled");
+        File.WriteAllText(inPlace, "old");
+
+        var src = Path.Combine(_gameDir, "Raw.dll");
+        File.WriteAllText(src, "new");
+
+        new ModInstallService(_config).Install(src);
+
+        Assert.True(File.Exists(Path.Combine(_modsDir, "Raw.dll")));
+        Assert.False(File.Exists(disabledSibling));
+        Assert.False(File.Exists(inPlace));
+    }
+
+    [Fact]
     public void Install_AlreadyPresent_ReplacesAsUpdate()
     {
         var srcDir = Path.Combine(_gameDir, "src", "Dup");
