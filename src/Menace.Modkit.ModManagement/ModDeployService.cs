@@ -94,6 +94,9 @@ public sealed class ModDeployService
 
             if (Directory.Exists(target))
                 Directory.Delete(target, recursive: true);
+            // Also drop any disabled copy, so deploying a modpack that's currently in
+            // DisabledMods/ supersedes it instead of leaving a duplicate.
+            ClearDisabledMirror(name);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             Directory.Move(staging, target);
         }
@@ -220,6 +223,24 @@ public sealed class ModDeployService
                 continue;
             CopyTree(dir, Path.Combine(dest, dirName), isRoot: false);
         }
+    }
+
+    /// <summary>
+    /// Remove a disabled copy of <paramref name="name"/> from <c>DisabledMods/</c> so a
+    /// (re)deploy supersedes it rather than leaving a duplicate the catalog would list twice.
+    /// </summary>
+    private void ClearDisabledMirror(string name)
+    {
+        var gameDir = _config.GameInstallPath;
+        if (string.IsNullOrEmpty(gameDir))
+            return;
+        var disabled = Path.Combine(gameDir, "DisabledMods", name);
+        try
+        {
+            if (Directory.Exists(disabled))
+                Directory.Delete(disabled, recursive: true);
+        }
+        catch { /* best effort — a locked stale copy just surfaces as a duplicate */ }
     }
 
     private static void AssembleDlls(string sourceDir, ModpackManifest manifest, string target)

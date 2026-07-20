@@ -223,6 +223,21 @@ public sealed class ModDeployServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task Deploy_WhileDisabled_RemovesDisabledCopy_NoDuplicate()
+    {
+        // A modpack sitting in DisabledMods/ must not survive a redeploy into Mods/.
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Dup"",""version"":""1.0.0""}");
+        var disabled = Path.Combine(_gameDir, "DisabledMods", "Dup");
+        Directory.CreateDirectory(disabled);
+        File.WriteAllText(Path.Combine(disabled, "modpack.json"), "{}");
+
+        await new ModDeployService(_config).DeployAsync(_sourceDir);
+
+        Assert.True(Directory.Exists(Path.Combine(_modsDir, "Dup")));
+        Assert.False(Directory.Exists(disabled));
+    }
+
+    [Fact]
     public async Task Deploy_ReplacesExistingInstall()
     {
         WriteManifest(@"{""manifestVersion"":2,""name"":""Dup"",""version"":""1.0.0""}");
