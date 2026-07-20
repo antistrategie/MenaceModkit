@@ -27,22 +27,13 @@ public static class EarlyTemplateInjection
 
     // Settings - must match GameMcpServer.SETTINGS_NAME where the setting is registered
     private const string SETTINGS_NAME = "MCP Server";
-    private const string SETTING_KEY_EARLY_INJECTION = "EarlyInjection";
+    private const string SETTING_KEY_DISABLE_EARLY_INJECTION = "DisableEarlyInjection";
     private static bool _useEarlyInjection = false;
     private static bool _initialized = false;
     private static bool _hasInjectedThisSession = false;
 
     // Reference to the main mod for accessing modpack data
     private static ModpackLoaderMod _modInstance;
-
-    // Cached types for black market pool injection
-    private static Type _baseItemTemplateType;
-    private static Type _strategyStateType;
-    private static Type _strategyConfigType;
-    private static bool _hasInjectedBlackMarketPool = false;
-
-    // Field offset for BlackMarketMaxQuantity on BaseItemTemplate
-    private const int OFFSET_BLACKMARKET_MAX_QUANTITY = 0xAC;
 
     /// <summary>
     /// Whether early injection is enabled.
@@ -68,12 +59,16 @@ public static class EarlyTemplateInjection
     {
         _modInstance = modInstance;
 
-        // Read setting value (registered by GameMcpServer under "Modpack Loader")
-        _useEarlyInjection = ModSettings.Get<bool>(SETTINGS_NAME, SETTING_KEY_EARLY_INJECTION);
+        // Always-on unless explicitly opted out. Scene-load application alone leaves a
+        // race at the main menu: a fast click on New Campaign can build pools before the
+        // deferred apply has run. The CreateNewGame/LoadGame prefixes close that window.
+        // (New opt-out key: legacy "EarlyInjection": false entries from the opt-in era
+        // must not keep the guarantee off.)
+        _useEarlyInjection = !ModSettings.Get<bool>(SETTINGS_NAME, SETTING_KEY_DISABLE_EARLY_INJECTION);
 
         if (!_useEarlyInjection)
         {
-            _log.Msg("Early injection disabled, using legacy scene-load injection");
+            _log.Msg("Early injection disabled by user setting, using legacy scene-load injection only");
             return;
         }
 
@@ -237,13 +232,9 @@ public static class EarlyTemplateInjection
     /// </summary>
     private static void BlackMarketFillUp_Prefix()
     {
-        // Inject custom items into the black market pool
-        // This ensures items with BlackMarketMaxQuantity > 0 are in the pool
-        if (!_hasInjectedBlackMarketPool)
-        {
-            InjectItemsIntoBlackMarketPool();
-        }
-
+        // No manual pool injection needed: clone registration mirrors every clone into
+        // ancestor DataTemplateLoader slots, so the market's GetAll<BaseItemTemplate>()
+        // enumeration sees them natively.
         _log.Msg("[BlackMarket.FillUp] Firing blackmarket_refresh Lua event");
 
         try
@@ -254,154 +245,6 @@ public static class EarlyTemplateInjection
         {
             _log.Warning($"Error firing blackmarket_refresh Lua event: {ex.Message}");
         }
-    }
-
-    /// <summary>
-    /// Injects all item templates with BlackMarketMaxQuantity > 0 into the
-    /// StrategyConfig.BlackMarketItems pool, enabling custom items to appear
-    /// in the black market without requiring Lua scripting.
-    /// </summary>
-    private static void InjectItemsIntoBlackMarketPool()
-    {
-        try
-        {
-            _log.Msg("[BlackMarket] Scanning for custom items to inject into pool...");
-
-            // Ensure types are loaded
-            EnsureBlackMarketTypesLoaded();
-
-            if (_baseItemTemplateType == null || _strategyStateType == null || _strategyConfigType == null)
-            {
-                _log.Warning("[BlackMarket] Required types not found, cannot inject items");
-                return;
-            }
-
-            // Get StrategyState.Get() to access the current strategy state
-            var getMethod = _strategyStateType.GetMethod("Get", BindingFlags.Public | BindingFlags.Static);
-            var strategyState = getMethod?.Invoke(null, null);
-            if (strategyState == null)
-            {
-                _log.Warning("[BlackMarket] StrategyState.Get() returned null");
-                return;
-            }
-
-            // Get Config property
-            var configProp = _strategyStateType.GetProperty("Config", BindingFlags.Public | BindingFlags.Instance);
-            var config = configProp?.GetValue(strategyState);
-            if (config == null)
-            {
-                _log.Warning("[BlackMarket] StrategyConfig is null");
-                return;
-            }
-
-            // Get BlackMarketItems property (the pool)
-            var itemsProp = _strategyConfigType.GetProperty("BlackMarketItems", BindingFlags.Public | BindingFlags.Instance);
-            var itemPool = itemsProp?.GetValue(config);
-            if (itemPool == null)
-            {
-                _log.Warning("[BlackMarket] BlackMarketItems pool is null");
-                return;
-            }
-
-            // Get the Add method on the list
-            var poolType = itemPool.GetType();
-            var addMethod = poolType.GetMethod("Add", BindingFlags.Public | BindingFlags.Instance);
-            var containsMethod = poolType.GetMethod("Contains", BindingFlags.Public | BindingFlags.Instance);
-            var countProp = poolType.GetProperty("Count", BindingFlags.Public | BindingFlags.Instance);
-
-            if (addMethod == null)
-            {
-                _log.Warning("[BlackMarket] Could not find Add method on item pool");
-                return;
-            }
-
-            int originalCount = (int)(countProp?.GetValue(itemPool) ?? 0);
-
-            // Find all BaseItemTemplate objects in the game
-            var il2cppType = Il2CppType.From(_baseItemTemplateType);
-            var allTemplates = Resources.FindObjectsOfTypeAll(il2cppType);
-
-            if (allTemplates == null || allTemplates.Length == 0)
-            {
-                _log.Msg("[BlackMarket] No item templates found");
-                _hasInjectedBlackMarketPool = true;
-                return;
-            }
-
-            int injectedCount = 0;
-
-            foreach (var templateObj in allTemplates)
-            {
-                if (templateObj == null) continue;
-
-                try
-                {
-                    // Read BlackMarketMaxQuantity at offset 0xAC
-                    var templatePtr = ((Il2CppObjectBase)templateObj).Pointer;
-                    if (templatePtr == IntPtr.Zero) continue;
-
-                    int maxQuantity = System.Runtime.InteropServices.Marshal.ReadInt32(templatePtr + OFFSET_BLACKMARKET_MAX_QUANTITY);
-
-                    if (maxQuantity > 0)
-                    {
-                        // Check if already in pool
-                        bool alreadyInPool = false;
-                        if (containsMethod != null)
-                        {
-                            try
-                            {
-                                alreadyInPool = (bool)containsMethod.Invoke(itemPool, new object[] { templateObj });
-                            }
-                            catch
-                            {
-                                // Contains might fail for various reasons, proceed anyway
-                            }
-                        }
-
-                        if (!alreadyInPool)
-                        {
-                            addMethod.Invoke(itemPool, new object[] { templateObj });
-                            injectedCount++;
-                            _log.Msg($"[BlackMarket] Injected '{templateObj.name}' into pool (MaxQty: {maxQuantity})");
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    _log.Warning($"[BlackMarket] Error processing template: {ex.Message}");
-                }
-            }
-
-            int finalCount = (int)(countProp?.GetValue(itemPool) ?? 0);
-            _log.Msg($"[BlackMarket] Pool injection complete: {injectedCount} items added ({originalCount} -> {finalCount})");
-            _hasInjectedBlackMarketPool = true;
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"[BlackMarket] Failed to inject items into pool: {ex.Message}");
-        }
-    }
-
-    /// <summary>
-    /// Loads types needed for black market pool injection.
-    /// </summary>
-    private static void EnsureBlackMarketTypesLoaded()
-    {
-        if (_baseItemTemplateType != null && _strategyStateType != null && _strategyConfigType != null)
-            return;
-
-        // Game types must come from the IL2CPP-aware resolver; raw Assembly.GetType()
-        // cannot see interop proxy types for game classes.
-        _baseItemTemplateType ??= GameType.Find("Menace.Items.BaseItemTemplate")?.ManagedType;
-        _strategyStateType ??= GameType.Find("Menace.States.StrategyState")?.ManagedType;
-        _strategyConfigType ??= GameType.Find("Menace.Strategy.StrategyConfig")?.ManagedType;
-
-        if (_baseItemTemplateType == null)
-            _log.Warning("[BlackMarket] BaseItemTemplate type not found");
-        if (_strategyStateType == null)
-            _log.Warning("[BlackMarket] StrategyState type not found");
-        if (_strategyConfigType == null)
-            _log.Warning("[BlackMarket] StrategyConfig type not found");
     }
 
     /// <summary>
@@ -450,6 +293,5 @@ public static class EarlyTemplateInjection
     public static void Reset()
     {
         _hasInjectedThisSession = false;
-        _hasInjectedBlackMarketPool = false;
     }
 }
