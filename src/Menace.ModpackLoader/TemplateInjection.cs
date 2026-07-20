@@ -1114,7 +1114,7 @@ public partial class ModpackLoaderMod
         if (targetType == typeof(int)) return Convert.ToInt32(value);
         if (targetType == typeof(float)) return Convert.ToSingle(value);
         if (targetType == typeof(double)) return Convert.ToDouble(value);
-        if (targetType == typeof(bool)) return Convert.ToBoolean(value);
+        if (targetType == typeof(bool)) return ParseLenientBool(value);
         if (targetType == typeof(byte)) return Convert.ToByte(value);
         if (targetType == typeof(short)) return Convert.ToInt16(value);
         if (targetType == typeof(long)) return Convert.ToInt64(value);
@@ -1279,7 +1279,7 @@ public partial class ModpackLoaderMod
             if (targetType == typeof(long)) return Convert.ToInt64(value);
             if (targetType == typeof(short)) return Convert.ToInt16(value);
             if (targetType == typeof(byte)) return Convert.ToByte(value);
-            if (targetType == typeof(bool)) return Convert.ToBoolean(value);
+            if (targetType == typeof(bool)) return ParseLenientBool(value);
             if (targetType == typeof(uint)) return Convert.ToUInt32(value);
             if (targetType == typeof(ulong)) return Convert.ToUInt64(value);
             if (targetType == typeof(ushort)) return Convert.ToUInt16(value);
@@ -2003,5 +2003,16 @@ public partial class ModpackLoaderMod
         {
             SdkLogger.Warning($"      LogArmyEntryAppend failed: {ex.Message}");
         }
+    }
+
+    private static bool ParseLenientBool(object value)
+    {
+        // Modders commonly write booleans as 1/0 (or "1"/"0") in stats JSON;
+        // Convert.ToBoolean rejects those strings with a FormatException and the
+        // field silently keeps its vanilla value. Accept them alongside true/false.
+        var s = value?.ToString()?.Trim();
+        if (s == "1") return true;
+        if (s == "0") return false;
+        return Convert.ToBoolean(value);
     }
 }
