@@ -167,65 +167,6 @@ public class DeployState
     }
 
     /// <summary>
-    /// Find files in the Mods/ folder that are not tracked in the deploy state.
-    /// These are "orphaned" files that may have been manually added or left over
-    /// from a previous deployment that wasn't properly cleaned up.
-    /// </summary>
-    /// <param name="modsBasePath">Base path to the game's Mods/ folder</param>
-    /// <param name="excludePatterns">Optional patterns to exclude (e.g., "Menace.*.dll" for core DLLs)</param>
-    public List<string> GetOrphanedFiles(string modsBasePath, IEnumerable<string>? excludePatterns = null)
-    {
-        var orphaned = new List<string>();
-
-        if (!Directory.Exists(modsBasePath))
-            return orphaned;
-
-        // Build a set of tracked relative paths for fast lookup
-        var trackedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var fileInfo in DeployedFileInfos)
-        {
-            trackedPaths.Add(fileInfo.RelativePath);
-        }
-        // Also include legacy DeployedFiles for backward compatibility
-        foreach (var filePath in DeployedFiles)
-        {
-            trackedPaths.Add(filePath);
-        }
-
-        // Build exclusion patterns
-        var patterns = excludePatterns?.ToList() ?? new List<string>();
-
-        // Scan all files in Mods/
-        foreach (var fullPath in Directory.GetFiles(modsBasePath, "*", SearchOption.AllDirectories))
-        {
-            var relativePath = Path.GetRelativePath(modsBasePath, fullPath);
-            var fileName = Path.GetFileName(fullPath);
-
-            // Check exclusion patterns
-            bool excluded = false;
-            foreach (var pattern in patterns)
-            {
-                if (MatchesWildcard(fileName, pattern))
-                {
-                    excluded = true;
-                    break;
-                }
-            }
-
-            if (excluded)
-                continue;
-
-            // Check if tracked
-            if (!trackedPaths.Contains(relativePath))
-            {
-                orphaned.Add(relativePath);
-            }
-        }
-
-        return orphaned;
-    }
-
-    /// <summary>
     /// Get all files from a specific modpack.
     /// </summary>
     /// <param name="modpackName">Name of the modpack</param>
@@ -306,23 +247,19 @@ public class DeployState
         };
     }
 
-    /// <summary>
-    /// Simple wildcard pattern matching (supports * and ?).
-    /// </summary>
-    private static bool MatchesWildcard(string input, string pattern)
-    {
-        // Convert wildcard pattern to regex
-        var regexPattern = "^" + System.Text.RegularExpressions.Regex.Escape(pattern)
-            .Replace("\\*", ".*")
-            .Replace("\\?", ".") + "$";
-        return System.Text.RegularExpressions.Regex.IsMatch(input, regexPattern,
-            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-    }
 }
 
 public class DeployedModpack
 {
     public string Name { get; set; } = string.Empty;
+
+    /// <summary>
+    /// The actual <c>Mods/</c> folder the deploy produced. Can differ from
+    /// <see cref="Name"/> when the manifest name needed sanitising; null in
+    /// records written by older versions.
+    /// </summary>
+    public string? DeployedDirName { get; set; }
+
     public string Version { get; set; } = string.Empty;
     public string ContentHash { get; set; } = string.Empty;
     public int LoadOrder { get; set; }

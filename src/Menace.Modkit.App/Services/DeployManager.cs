@@ -53,6 +53,9 @@ public class DeployManager
 
         try
         {
+            // One-time legacy un-bake for installs upgraded from pre-loose-deploy versions.
+            await Task.Run(RestoreLegacyBakeIfNeeded, ct);
+
             // Refresh runtime DLLs from the bundled directory, then deploy them first so
             // ModpackLoader.dll is available as a compile reference.
             _modpackManager.RefreshRuntimeDlls();
@@ -61,7 +64,11 @@ public class DeployManager
 
             // Always recompile when sources exist — the Modkit is the authoring tool and
             // the author may have just edited the code.
-            await _deployService.DeployAsync(modpack.Path, progress, ct, forceCompile: true, deployedBy: DeployedByMarker);
+            var target = await _deployService.DeployAsync(modpack.Path, progress, ct, forceCompile: true, deployedBy: DeployedByMarker);
+
+            // Keep the (informational) deploy state in step so HasChangedSinceDeploy
+            // doesn't report drift after every single deploy.
+            UpsertDeployState(modpack, Path.GetFileName(target));
 
             ModkitLog.Info($"Deployed {modpack.Name} to {modsBasePath}");
             progress?.Report($"Deployed {modpack.Name}");
@@ -106,15 +113,24 @@ public class DeployManager
 
         try
         {
+            // One-time legacy un-bake for installs upgraded from pre-loose-deploy versions.
+            await Task.Run(RestoreLegacyBakeIfNeeded, ct);
+
             // Remove modkit-deployed modpacks that are no longer in staging. Ownership
             // comes from the deployedBy marker in each dir's runtime manifest (stateless);
             // the previous deploy-state record covers dirs deployed before the marker
             // existed. Mods installed by other tools or by hand are never touched.
-            var currentModpackNames = new HashSet<string>(modpacks.Select(m => m.Name), StringComparer.OrdinalIgnoreCase);
+            // Names are matched on the folder DeployAsync will actually produce (the
+            // sanitised manifest name) — matching on the raw manifest name would retire
+            // and redeploy any modpack whose name needed sanitising, every cycle.
+            var currentModpackNames = new HashSet<string>(
+                modpacks.Select(m => Menace.Modkit.ModManagement.ModDeployService.DeployFolderNameFor(m.Path, m.Name)),
+                StringComparer.OrdinalIgnoreCase);
             var retired = FindOwnedModpackDirs(modsBasePath)
                 .Concat(previousState.DeployedModpacks
-                    .Where(mp => !string.IsNullOrWhiteSpace(mp.Name))
-                    .Select(mp => Path.Combine(modsBasePath, mp.Name)))
+                    .Select(mp => mp.DeployedDirName ?? mp.Name)
+                    .Where(n => !string.IsNullOrWhiteSpace(n))
+                    .Select(n => Path.Combine(modsBasePath, n)))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Where(dir => !currentModpackNames.Contains(Path.GetFileName(dir)));
             foreach (var dir in retired)
@@ -124,6 +140,9 @@ public class DeployManager
                 ModkitLog.Info($"[DeployManager] Modpack '{Path.GetFileName(dir)}' no longer in staging, removing");
                 Directory.Delete(dir, true);
             }
+
+            // Retire split-out leader packs whose owning modpack is gone (marker-owned only).
+            RetireOwnedLeaderPacks(modsBasePath, owner => owner != null && !currentModpackNames.Contains(owner));
 
             _modpackManager.RefreshRuntimeDlls();
             progress?.Report("Deploying runtime DLLs...");
@@ -136,11 +155,12 @@ public class DeployManager
                 ct.ThrowIfCancellationRequested();
                 var modpack = modpacks[i];
                 progress?.Report($"Deploying {modpack.Name} ({i + 1}/{total})...");
-                await _deployService.DeployAsync(modpack.Path, progress, ct, forceCompile: true, deployedBy: DeployedByMarker);
+                var target = await _deployService.DeployAsync(modpack.Path, progress, ct, forceCompile: true, deployedBy: DeployedByMarker);
 
                 deployedModpacks.Add(new DeployedModpack
                 {
                     Name = modpack.Name,
+                    DeployedDirName = Path.GetFileName(target),
                     Version = modpack.Version,
                     LoadOrder = modpack.LoadOrder,
                     ContentHash = ComputeDirectoryHash(modpack.Path),
@@ -184,54 +204,9 @@ public class DeployManager
 
         try
         {
-            // Step 1: Pre-undeploy validation
-            progress?.Report("Validating deployment state...");
-            var validation = await ValidateBeforeUndeployAsync(progress);
-
-            // Log validation results
-            if (!validation.IsValid)
-            {
-                ModkitLog.Warn($"[DeployManager] Pre-undeploy validation found issues: {validation.Summary}");
-
-                foreach (var modified in validation.ModifiedFiles)
-                {
-                    ModkitLog.Warn($"[DeployManager] Modified since deploy: {modified.RelativePath} " +
-                        $"(expected {modified.ExpectedSize}B, actual {modified.ActualSize}B)");
-                }
-
-                foreach (var missing in validation.MissingFiles)
-                {
-                    ModkitLog.Info($"[DeployManager] Already removed: {missing}");
-                }
-
-                foreach (var unknown in validation.UnknownFiles)
-                {
-                    ModkitLog.Info($"[DeployManager] Unknown file (will be preserved): {unknown}");
-                }
-            }
-
-            // Check for critical issues that would prevent safe undeploy
-            if (!validation.ShouldProceed)
-            {
-                var errorMsg = $"Cannot proceed with undeploy: {validation.Summary}";
-                ModkitLog.Error($"[DeployManager] {errorMsg}");
-                return new DeployResult { Success = false, Message = errorMsg };
-            }
-
-            // Log warnings about backup validation
-            if (validation.BackupValidation != null && !validation.BackupValidation.IsValid)
-            {
-                if (validation.BackupValidation.IsCritical)
-                {
-                    ModkitLog.Error($"[DeployManager] Critical backup issue: {validation.BackupValidation.Summary}");
-                }
-                else
-                {
-                    ModkitLog.Warn($"[DeployManager] Backup issue: {validation.BackupValidation.Summary}");
-                }
-            }
-
-            // Step 2: Proceed with file removal
+            // Undeploy is stateless: remove marker-owned modpack dirs (+ legacy
+            // deploy-state records) and restore any legacy baked game files. There is
+            // no longer per-file tracking to validate against.
             progress?.Report("Removing deployed mods...");
 
             await Task.Run(() =>
@@ -281,6 +256,10 @@ public class DeployManager
                         File.Delete(fullPath);
                     }
                 }
+
+                // Remove split-out leader packs we deployed (marker-owned; user-installed
+                // packs carry no marker and are never touched).
+                RetireOwnedLeaderPacks(modsBasePath, _ => true);
 
                 // Clean up deployment artifacts that shouldn't persist
                 var artifactDirs = new[] { "compiled", "dll", "dlls" };
@@ -365,283 +344,6 @@ public class DeployManager
 
         return false;
     }
-
-    /// <summary>
-    /// Validate the current deployment state before undeploy.
-    /// Checks for modified files, missing files, and unknown files.
-    /// </summary>
-    /// <param name="progress">Optional progress reporter</param>
-    /// <returns>Validation result with details about any issues found</returns>
-    public async Task<UndeployValidationResult> ValidateBeforeUndeployAsync(IProgress<string>? progress = null)
-    {
-        var result = new UndeployValidationResult { IsValid = true };
-        var modsBasePath = _modpackManager.ModsBasePath;
-
-        if (string.IsNullOrEmpty(modsBasePath))
-        {
-            result.IsValid = false;
-            result.Summary = "Game install path not set";
-            result.ShouldProceed = false;
-            return result;
-        }
-
-        var state = DeployState.LoadFrom(DeployStateFilePath);
-
-        if (state.DeployedModpacks.Count == 0 && state.DeployedFiles.Count == 0 && state.DeployedFileInfos.Count == 0)
-        {
-            result.IsValid = true;
-            result.Summary = "No deployment to validate";
-            return result;
-        }
-
-        progress?.Report("Validating deployed files...");
-
-        await Task.Run(() =>
-        {
-            // Check for modified and missing files
-            if (state.DeployedFileInfos.Count > 0)
-            {
-                var validationErrors = state.ValidateDeployedFiles(modsBasePath);
-
-                foreach (var error in validationErrors)
-                {
-                    switch (error.ErrorType)
-                    {
-                        case FileValidationErrorType.Missing:
-                            result.MissingFiles.Add(error.RelativePath);
-                            break;
-
-                        case FileValidationErrorType.SizeMismatch:
-                        case FileValidationErrorType.HashMismatch:
-                            result.ModifiedFiles.Add(new ModifiedFileInfo
-                            {
-                                RelativePath = error.RelativePath,
-                                ExpectedSize = error.ExpectedSize,
-                                ActualSize = error.ActualSize,
-                                ExpectedHash = error.ExpectedHash,
-                                ActualHash = error.ActualHash,
-                                ModificationType = error.ErrorType == FileValidationErrorType.SizeMismatch
-                                    ? ModificationType.SizeChanged
-                                    : ModificationType.ContentChanged
-                            });
-                            break;
-                    }
-                }
-            }
-
-            // Check for orphaned/unknown files in Mods/ folder
-            var excludePatterns = new[] { "Menace.*.dll", "*.pdb", "deploy-state.json" };
-            var orphanedFiles = state.GetOrphanedFiles(modsBasePath, excludePatterns);
-
-            // Separate orphaned files into modpack directories (untracked) vs root level (unknown)
-            foreach (var orphaned in orphanedFiles)
-            {
-                var firstSegment = orphaned.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).FirstOrDefault();
-                bool isInModpackDir = state.DeployedModpacks.Any(m =>
-                    string.Equals(m.Name, firstSegment, StringComparison.OrdinalIgnoreCase));
-
-                if (isInModpackDir)
-                {
-                    result.UntrackedFiles.Add(orphaned);
-                }
-                else
-                {
-                    result.UnknownFiles.Add(orphaned);
-                }
-            }
-        });
-
-        // Validate backup files for game restoration
-        progress?.Report("Validating backup files...");
-        result.BackupValidation = await ValidateBackupsAsync();
-
-        result.BuildSummary();
-        return result;
-    }
-
-    /// <summary>
-    /// Validate backup files needed for game restoration.
-    /// </summary>
-    private async Task<BackupValidationSummary> ValidateBackupsAsync()
-    {
-        var summary = new BackupValidationSummary { IsValid = true };
-
-        var gameInstallPath = _modpackManager.GetGameInstallPath();
-        if (string.IsNullOrEmpty(gameInstallPath))
-        {
-            summary.IsValid = false;
-            summary.IsCritical = true;
-            summary.Summary = "Cannot locate game install path";
-            return summary;
-        }
-
-        var gameDataDir = Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
-        if (string.IsNullOrEmpty(gameDataDir))
-        {
-            summary.IsValid = false;
-            summary.IsCritical = true;
-            summary.Summary = "Cannot locate game data directory";
-            return summary;
-        }
-
-        return await Task.Run(() =>
-        {
-            // Check for backup files
-            var backupFiles = new[] { "resources.assets.original", "globalgamemanagers.original" };
-            foreach (var backupFile in backupFiles)
-            {
-                var backupPath = Path.Combine(gameDataDir, backupFile);
-                if (!File.Exists(backupPath))
-                {
-                    // Missing backup is only critical if the patched file exists
-                    var originalFile = backupFile.Replace(".original", "");
-                    var originalPath = Path.Combine(gameDataDir, originalFile);
-                    if (File.Exists(originalPath))
-                    {
-                        summary.MissingBackups.Add(backupFile);
-                    }
-                }
-            }
-
-            // Load and validate backup metadata if available
-            var metadata = BackupMetadata.LoadFrom(gameDataDir);
-            summary.HasMetadata = metadata != null;
-
-            if (metadata != null)
-            {
-                var validationResult = metadata.ValidateBackups(gameDataDir);
-                if (!validationResult.IsValid)
-                {
-                    summary.IsValid = false;
-                    // Include both hash mismatches AND size mismatches as corrupted
-                    summary.CorruptedBackups.AddRange(validationResult.HashMismatches);
-                    summary.CorruptedBackups.AddRange(validationResult.SizeMismatches.Keys);
-
-                    // Check if corrupted files are critical - BOTH hash AND size mismatches count
-                    var allCorrupted = validationResult.HashMismatches
-                        .Concat(validationResult.SizeMismatches.Keys)
-                        .ToList();
-                    if (allCorrupted.Any(f =>
-                        f.Contains("resources.assets") || f.Contains("globalgamemanagers")))
-                    {
-                        summary.IsCritical = true;
-                    }
-
-                    summary.Summary = validationResult.GetSummary();
-                }
-            }
-            else if (summary.MissingBackups.Count > 0)
-            {
-                summary.IsValid = false;
-                summary.IsCritical = true;
-                summary.Summary = $"Missing backup files: {string.Join(", ", summary.MissingBackups)}. " +
-                                 "Game files cannot be restored. You may need to verify game files via Steam.";
-            }
-
-            if (summary.IsValid && summary.MissingBackups.Count == 0)
-            {
-                summary.Summary = "All backup files are valid";
-            }
-
-            return summary;
-        });
-    }
-
-    /// <summary>
-    /// Clean up orphaned files in the Mods/ folder that aren't tracked in deploy state.
-    /// </summary>
-    /// <param name="options">Options controlling cleanup behavior</param>
-    /// <param name="progress">Optional progress reporter</param>
-    /// <returns>List of files that were removed (or would be removed in dry-run mode)</returns>
-    public async Task<List<string>> CleanupOrphanedFilesAsync(
-        OrphanedFileCleanupOptions options,
-        IProgress<string>? progress = null)
-    {
-        var removedFiles = new List<string>();
-        var modsBasePath = _modpackManager.ModsBasePath;
-
-        if (string.IsNullOrEmpty(modsBasePath))
-            return removedFiles;
-
-        var state = DeployState.LoadFrom(DeployStateFilePath);
-
-        // Always exclude core DLLs and common config files
-        var excludePatterns = new List<string>(options.ProtectedPatterns)
-        {
-            "Menace.*.dll",
-            "*.pdb",
-            "deploy-state.json"
-        };
-
-        var orphanedFiles = state.GetOrphanedFiles(modsBasePath, excludePatterns);
-
-        progress?.Report($"Found {orphanedFiles.Count} orphaned file(s)");
-
-        await Task.Run(() =>
-        {
-            foreach (var relativePath in orphanedFiles)
-            {
-                var fullPath = Path.Combine(modsBasePath, relativePath);
-
-                if (options.DryRun)
-                {
-                    ModkitLog.Info($"[DeployManager] Would remove orphaned file: {relativePath}");
-                    removedFiles.Add(relativePath);
-                }
-                else
-                {
-                    try
-                    {
-                        File.Delete(fullPath);
-                        ModkitLog.Info($"[DeployManager] Removed orphaned file: {relativePath}");
-                        removedFiles.Add(relativePath);
-                    }
-                    catch (Exception ex)
-                    {
-                        ModkitLog.Warn($"[DeployManager] Failed to remove orphaned file {relativePath}: {ex.Message}");
-                    }
-                }
-            }
-
-            // Remove empty directories if requested
-            if (options.RemoveEmptyDirectories && !options.DryRun)
-            {
-                RemoveEmptyDirectories(modsBasePath);
-            }
-        });
-
-        return removedFiles;
-    }
-
-    /// <summary>
-    /// Remove empty directories recursively.
-    /// </summary>
-    private static void RemoveEmptyDirectories(string rootPath)
-    {
-        if (!Directory.Exists(rootPath))
-            return;
-
-        foreach (var dir in Directory.GetDirectories(rootPath, "*", SearchOption.AllDirectories)
-            .OrderByDescending(d => d.Length)) // Process deepest directories first
-        {
-            try
-            {
-                if (Directory.GetFileSystemEntries(dir).Length == 0)
-                {
-                    Directory.Delete(dir);
-                    ModkitLog.Info($"[DeployManager] Removed empty directory: {Path.GetRelativePath(rootPath, dir)}");
-                }
-            }
-            catch
-            {
-                // Ignore errors removing directories
-            }
-        }
-    }
-
-    // ---------------------------------------------------------------
-    // Internal
-    // ---------------------------------------------------------------
 
     /// <summary>
     /// Copy runtime DLLs from runtime/ into the game install.
@@ -799,6 +501,124 @@ public class DeployManager
     /// Restore original game data files from backups.
     /// Verifies backup integrity using BackupMetadata before restoring.
     /// </summary>
+    /// <summary>
+    /// Update (or insert) one modpack's entry in the informational deploy state after a
+    /// single deploy, so change tracking doesn't drift until the next Deploy All.
+    /// </summary>
+    private void UpsertDeployState(ModpackManifest modpack, string deployedDirName)
+    {
+        try
+        {
+            var state = DeployState.LoadFrom(DeployStateFilePath);
+            state.DeployedModpacks.RemoveAll(mp =>
+                string.Equals(mp.Name, modpack.Name, StringComparison.OrdinalIgnoreCase));
+            state.DeployedModpacks.Add(new DeployedModpack
+            {
+                Name = modpack.Name,
+                DeployedDirName = deployedDirName,
+                Version = modpack.Version,
+                LoadOrder = modpack.LoadOrder,
+                ContentHash = ComputeDirectoryHash(modpack.Path),
+                SecurityStatus = modpack.SecurityStatus
+            });
+            state.LastDeployTimestamp = DateTime.Now;
+            state.SaveTo(DeployStateFilePath);
+        }
+        catch (Exception ex)
+        {
+            // Informational only — a failed write must never fail the deploy.
+            ModkitLog.Warn($"[DeployManager] Couldn't update deploy state: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Remove split-out CustomLeader packs this Modkit deployed. Ownership is the
+    /// provenance marker <see cref="Menace.Modkit.ModManagement.ModDeployService"/> stamps
+    /// on each split-out pack; packs without a marker (installed by the user, the
+    /// standalone manager, or by hand) are never touched.
+    /// </summary>
+    private static void RetireOwnedLeaderPacks(string modsBasePath, Func<string?, bool> ownerRetired)
+    {
+        var root = Path.Combine(modsBasePath, "customleaders");
+        if (!Directory.Exists(root))
+            return;
+
+        foreach (var pack in Directory.GetDirectories(root))
+        {
+            var marker = Menace.Modkit.ModManagement.ModDeployService.ReadLeaderPackMarker(pack);
+            if (marker?.DeployedBy != DeployedByMarker || !ownerRetired(marker.Owner))
+                continue;
+
+            ModkitLog.Info($"[DeployManager] Removing leader pack '{Path.GetFileName(pack)}' (split out of '{marker.Owner ?? "unknown"}')");
+            try { Directory.Delete(pack, true); }
+            catch (Exception ex)
+            {
+                ModkitLog.Warn($"[DeployManager] Failed to remove leader pack '{pack}': {ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// One-time legacy un-bake: pre-v37 deploys copied patched <c>resources.assets</c>/
+    /// <c>globalgamemanagers</c> over the game's files. Loose deploys never touch game
+    /// files, so an upgraded install would otherwise keep those stale baked mods forever
+    /// (on top of the runtime patches). If <c>.original</c> backups exist and the live
+    /// files differ from them, restore vanilla once; a marker file skips the (hash-heavy)
+    /// check on every later deploy.
+    /// </summary>
+    private void RestoreLegacyBakeIfNeeded()
+    {
+        try
+        {
+            var gameInstallPath = _modpackManager.GetGameInstallPath();
+            if (string.IsNullOrEmpty(gameInstallPath))
+                return;
+
+            var gameDataDir = Directory.GetDirectories(gameInstallPath, "*_Data").FirstOrDefault();
+            if (string.IsNullOrEmpty(gameDataDir))
+                return;
+
+            var marker = Path.Combine(gameDataDir, ".modkit-unbaked");
+            if (File.Exists(marker))
+                return;
+
+            var needsRestore = false;
+            foreach (var name in new[] { "resources.assets", "globalgamemanagers" })
+            {
+                var currentPath = Path.Combine(gameDataDir, name);
+                var backupPath = currentPath + ".original";
+                if (!File.Exists(backupPath) || !File.Exists(currentPath))
+                    continue;
+
+                // Cheap length check first; equal lengths get a one-time hash compare.
+                if (new FileInfo(currentPath).Length != new FileInfo(backupPath).Length
+                    || !string.Equals(
+                        DeployState.ComputeFileHash(currentPath),
+                        DeployState.ComputeFileHash(backupPath),
+                        StringComparison.OrdinalIgnoreCase))
+                {
+                    needsRestore = true;
+                    break;
+                }
+            }
+
+            if (needsRestore)
+            {
+                ModkitLog.Info("[DeployManager] Legacy baked game files detected (pre-v37 install) — restoring vanilla from .original backups (one-time)");
+                RestoreOriginalGameData(_modpackManager.ModsBasePath ?? string.Empty);
+            }
+
+            File.WriteAllText(marker,
+                "Written by the MENACE Modkit after verifying this install carries no legacy baked game files.\n" +
+                "v37+ deploys are loose files only and never patch game data. Safe to delete.\n");
+        }
+        catch (Exception ex)
+        {
+            // No marker written → the check simply runs again on the next deploy.
+            ModkitLog.Warn($"[DeployManager] Legacy bake check failed (will retry next deploy): {ex.Message}");
+        }
+    }
+
     private void RestoreOriginalGameData(string modsBasePath)
     {
         ModkitLog.Info("[DeployManager] RestoreOriginalGameData starting...");

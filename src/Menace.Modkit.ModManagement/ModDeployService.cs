@@ -250,6 +250,16 @@ public sealed class ModDeployService
     }
 
     /// <summary>
+    /// The <c>Mods/</c> folder name a deploy of <paramref name="sourceDir"/> will produce
+    /// — exposed so deployers can match on-disk dirs against staging without re-deriving
+    /// the sanitisation (a name with invalid chars deploys under a different folder than
+    /// the manifest says).
+    /// </summary>
+    public static string DeployFolderNameFor(string sourceDir, string? manifestName) =>
+        SanitiseModName(manifestName)
+            ?? Path.GetFileName(sourceDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+    /// <summary>
     /// Reduce a manifest-supplied name to a safe single folder name (no path components,
     /// no invalid chars). Returns null if nothing usable remains, so the caller falls back
     /// to the source folder name.

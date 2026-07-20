@@ -360,6 +360,9 @@ public sealed class ModpacksViewModel : ViewModelBase
         var manifest = _modpackManager.CreateModpack(name, author, description);
         var vm = new ModpackItemViewModel(manifest, _modpackManager);
         AllModpacks.Add(vm);
+        // The ListBox binds to the sectioned ListRows, not AllModpacks — without a
+        // rebuild the new modpack is invisible.
+        RebuildListRows();
         SelectedModpack = vm;
     }
 
@@ -468,6 +471,9 @@ public sealed class ModpacksViewModel : ViewModelBase
         if (_modpackManager.DeleteStagingModpack(dirName))
         {
             AllModpacks.Remove(SelectedModpack);
+            // The ListBox binds to the sectioned ListRows, not AllModpacks — without a
+            // rebuild the deleted modpack stays visible (and deployable).
+            RebuildListRows();
             SelectedModpack = AllModpacks.FirstOrDefault();
             DeployStatus = $"Deleted: {name}";
             LoadOrderVM.Refresh();
