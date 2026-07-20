@@ -113,6 +113,14 @@ public sealed class MainViewModel : ReactiveObject
         private set => this.RaiseAndSetIfChanged(ref _modpackLoaderStatus, value);
     }
 
+    private bool _modpackLoaderUpdateAvailable;
+    /// <summary>True when the bundled Modpack Loader is newer than the installed one.</summary>
+    public bool ModpackLoaderUpdateAvailable
+    {
+        get => _modpackLoaderUpdateAvailable;
+        private set => this.RaiseAndSetIfChanged(ref _modpackLoaderUpdateAvailable, value);
+    }
+
     private string _jiangyuLoaderStatus = string.Empty;
     public string JiangyuLoaderStatus
     {
@@ -317,7 +325,7 @@ public sealed class MainViewModel : ReactiveObject
 
             // Everything filesystem-bound happens off-thread; only the collection and
             // property updates run back on the UI thread.
-            var (ordered, melonInstalled, melonVersion) = await Task.Run(() =>
+            var (ordered, melonInstalled, melonVersion, bundledModpackLoaderVersion) = await Task.Run(() =>
             {
                 var mods = _catalog.Scan()
                     .OrderBy(m => KindRank(m.Kind))
@@ -336,7 +344,11 @@ public sealed class MainViewModel : ReactiveObject
                     version = installer.GetInstalledMelonLoaderVersion();
                 }
 
-                return (mods, installed, version);
+                // The version this build would install (bundled DLL); an update is
+                // available when it's newer than what's in Mods/.
+                var bundledLoader = ModLoaderInstaller.GetBundledModpackLoaderVersion();
+
+                return (mods, installed, version, bundledLoader);
             });
 
             Mods.Clear();
@@ -358,7 +370,7 @@ public sealed class MainViewModel : ReactiveObject
                 ? "Game not located — click Locate game… (or set MENACE_GAME_PATH)."
                 : $"{Mods.Count} mod(s) — {path}";
 
-            RefreshLoaderStatuses(gamePath, melonInstalled, melonVersion);
+            RefreshLoaderStatuses(gamePath, melonInstalled, melonVersion, bundledModpackLoaderVersion);
         }
         catch (Exception ex)
         {
@@ -388,12 +400,14 @@ public sealed class MainViewModel : ReactiveObject
         _ => "OTHER",
     };
 
-    private void RefreshLoaderStatuses(string? gamePath, bool melonInstalled, string? melonVersion)
+    private void RefreshLoaderStatuses(
+        string? gamePath, bool melonInstalled, string? melonVersion, string? bundledModpackLoaderVersion)
     {
         if (string.IsNullOrEmpty(gamePath))
         {
             MelonLoaderStatus = ModpackLoaderStatus = JiangyuLoaderStatus = "game not located";
             _melonLoaderInstalledVersion = _jiangyuInstalledVersion = null;
+            ModpackLoaderUpdateAvailable = false;
         }
         else
         {
@@ -403,7 +417,13 @@ public sealed class MainViewModel : ReactiveObject
                 : "not installed";
 
             // The other two appear in the scan as infrastructure DLLs in Mods/.
-            ModpackLoaderStatus = DescribeInstalled("Menace.ModpackLoader.dll");
+            var modpackLoaderInstalled = Mods
+                .FirstOrDefault(m => string.Equals(m.Id, "Menace.ModpackLoader.dll", StringComparison.OrdinalIgnoreCase))
+                ?.Version;
+            ModpackLoaderStatus = DescribeModpackLoader(modpackLoaderInstalled, bundledModpackLoaderVersion);
+            ModpackLoaderUpdateAvailable =
+                !string.IsNullOrEmpty(modpackLoaderInstalled) && IsNewerVersion(bundledModpackLoaderVersion, modpackLoaderInstalled);
+
             JiangyuLoaderStatus = DescribeInstalled("Jiangyu.Loader.dll");
             _jiangyuInstalledVersion = Mods
                 .FirstOrDefault(m => string.Equals(m.Id, "Jiangyu.Loader.dll", StringComparison.OrdinalIgnoreCase))
@@ -412,6 +432,40 @@ public sealed class MainViewModel : ReactiveObject
 
         this.RaisePropertyChanged(nameof(CanGetMelonLoader));
         this.RaisePropertyChanged(nameof(CanGetJiangyu));
+    }
+
+    /// <summary>
+    /// Status line for the Modpack Loader (bundled with this build). Flags when the
+    /// bundled version is newer than what's installed in the game.
+    /// </summary>
+    private static string DescribeModpackLoader(string? installed, string? bundled)
+    {
+        if (string.IsNullOrEmpty(installed))
+            return "not installed";
+        if (IsNewerVersion(bundled, installed))
+            return $"installed {installed} — update to {bundled} available";
+        return $"installed {installed}";
+    }
+
+    /// <summary>
+    /// True when <paramref name="candidate"/> is a strictly newer release than
+    /// <paramref name="current"/>. Tolerates a leading "v" and git-describe suffixes
+    /// ("1.2.3-8-g…"); returns false if either can't be parsed (never a false "update").
+    /// </summary>
+    private static bool IsNewerVersion(string? candidate, string? current)
+    {
+        if (string.IsNullOrEmpty(candidate) || string.IsNullOrEmpty(current))
+            return false;
+
+        static Version? Parse(string raw)
+        {
+            var core = raw.TrimStart('v', 'V').Split('-', '+')[0];
+            return Version.TryParse(core, out var v) ? v : null;
+        }
+
+        var a = Parse(candidate);
+        var b = Parse(current);
+        return a != null && b != null && a > b;
     }
 
     /// <summary>

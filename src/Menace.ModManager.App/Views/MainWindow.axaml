@@ -45,7 +45,13 @@
             <Button Grid.Row="0" Grid.Column="2" Content="Get" Click="OnInstallMelonLoaderClick" IsEnabled="{Binding CanGetMelonLoader}" />
 
             <TextBlock Grid.Row="1" Grid.Column="0" Text="Modpack Loader" VerticalAlignment="Center" Margin="0,8,0,0" />
-            <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding ModpackLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" Margin="0,8,0,0" />
+            <StackPanel Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center" Margin="0,8,0,0">
+              <TextBlock Text="{Binding ModpackLoaderStatus}" Opacity="0.6" VerticalAlignment="Center" />
+              <Border IsVisible="{Binding ModpackLoaderUpdateAvailable}"
+                      Background="#2E7D32" CornerRadius="3" Padding="6,1" VerticalAlignment="Center">
+                <TextBlock Text="UPDATE AVAILABLE" FontSize="10" FontWeight="Bold" Foreground="White" />
+              </Border>
+            </StackPanel>
             <Button Grid.Row="1" Grid.Column="2" Content="Install / Update" Click="OnInstallModpackLoaderClick" Margin="0,8,0,0" />
 
             <TextBlock Grid.Row="2" Grid.Column="0" Text="Jiangyu Loader" VerticalAlignment="Center" Margin="0,8,0,0" />

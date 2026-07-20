@@ -310,6 +310,28 @@ public class ModLoaderInstaller
         "Microsoft.CodeAnalysis.CSharp.dll"
     };
 
+    /// <summary>
+    /// Version of the ModpackLoader this build bundles (the one
+    /// <see cref="InstallModpackLoaderAsync"/> would deploy), read from the bundled DLL's
+    /// MelonInfo. Null if the bundle is missing or unreadable.
+    /// </summary>
+    public static string? GetBundledModpackLoaderVersion()
+    {
+        try
+        {
+            var dir = Path.Combine(AppContext.BaseDirectory, "third_party", "bundled", "ModpackLoader");
+            if (!Directory.Exists(dir))
+                return null;
+
+            var dll = Directory.EnumerateFiles(dir, "Menace.ModpackLoader*.dll").FirstOrDefault();
+            return dll == null ? null : MelonModInspector.Inspect(dll)?.Version;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     public Task<bool> InstallModpackLoaderAsync(Action<string>? progressCallback = null)
     {
         try
