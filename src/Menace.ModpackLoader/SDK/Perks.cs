@@ -726,6 +726,8 @@ public static class Perks
         });
 
         // addperk <nickname> <perk> - Add a perk to a unit
+        // Sole registration for 'addperk' (Roster no longer registers a duplicate): prefer the
+        // leader's own perk trees, fall back to the global perk table for anything outside them.
         DevConsole.RegisterCommand("addperk", "<nickname> <perk>", "Add a perk to a unit (no cost)", args =>
         {
             if (args.Length < 2)
@@ -740,7 +742,14 @@ public static class Perks
 
             var perk = FindPerkByName(leader, perkName);
             if (perk.IsNull)
-                return $"Perk '{perkName}' not found in {nickname}'s perk trees";
+            {
+                var globalPerk = Roster.FindPerk(perkName);
+                if (globalPerk.IsNull)
+                    return $"Perk '{perkName}' not found in {nickname}'s perk trees or the global perk table";
+                return Roster.AddPerk(leader, globalPerk)
+                    ? $"Added perk '{perkName}' to {nickname} (outside their perk trees)"
+                    : "Failed to add perk";
+            }
 
             if (AddPerk(leader, perk, false))
             {
@@ -751,10 +760,30 @@ public static class Perks
         });
 
         // removeperk <nickname> - Remove last perk from a unit
-        DevConsole.RegisterCommand("removeperk", "<nickname>", "Remove last perk from a unit", args =>
+        // Sole registration for 'removeperk' (Roster no longer registers a duplicate). Two forms:
+        // 'removeperk <nickname>' removes the last-learned perk; 'removeperk <nickname> <perk>'
+        // removes that perk by name (the form Roster used to provide).
+        DevConsole.RegisterCommand("removeperk", "<nickname> [perk]",
+            "Remove a unit's last perk, or a named perk", args =>
         {
             if (args.Length == 0)
-                return "Usage: removeperk <nickname>";
+                return "Usage: removeperk <nickname>          (removes the last-learned perk)\n" +
+                       "       removeperk <nickname> <perk>   (removes that perk by name)";
+
+            // Targeted form: args[0] is the nickname, the rest name the perk.
+            if (args.Length >= 2)
+            {
+                var targetLeader = Roster.FindByNickname(args[0]);
+                if (!targetLeader.IsNull)
+                {
+                    var targetPerk = string.Join(" ", args, 1, args.Length - 1);
+                    return Roster.RemovePerk(targetLeader, targetPerk)
+                        ? $"Removed perk '{targetPerk}' from {args[0]}"
+                        : $"{args[0]} has no perk named '{targetPerk}'";
+                }
+                // args[0] is not a leader; fall through and treat the whole line as a
+                // multi-word nickname for the last-perk form.
+            }
 
             var nickname = string.Join(" ", args);
             var leader = Roster.FindByNickname(nickname);

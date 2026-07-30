@@ -244,6 +244,13 @@ public static class DevConsole
     public static void RegisterCommand(string name, string usage, string description, Func<string[], string> handler)
     {
         if (string.IsNullOrEmpty(name) || handler == null) return;
+
+        // Overwriting is allowed (a mod may deliberately replace a built-in), but it is worth
+        // saying so: two unrelated commands claiming one name is how a working command
+        // disappears with nothing in the log to explain it.
+        if (_commands.ContainsKey(name))
+            SdkLogger.Warning($"[DevConsole] Command '{name}' re-registered, replacing the previous one");
+
         _commands[name] = new CommandEntry
         {
             Name = name,
@@ -532,11 +539,23 @@ public static class DevConsole
 
         // === Entity Spawner Commands ===
 
-        // spawn <template> <x> <y> [faction] - Spawn a unit
-        RegisterCommand("spawn", "<template> <x> <y> [faction]", "Spawn a unit at tile", args =>
+        // spawn <template> [x y [faction]] - Spawn an item (strategy) or a unit at a tile
+        // (tactical). One command for both: registering them separately meant whichever
+        // registered last silently replaced the other, which is how unit spawning went missing.
+        RegisterCommand("spawn", "<template> | <template> <x> <y> [faction]",
+            "Spawn an item (strategy map) or a unit at a tile (tactical mission)", args =>
         {
+            if (args.Length == 0)
+                return "Usage: spawn <template>                   (item, strategy map)\n" +
+                       "       spawn <template> <x> <y> [faction] (unit, tactical mission)";
+
+            if (args.Length == 1)
+                return Inventory.SpawnItem(args[0]);
+
             if (args.Length < 3)
-                return "Usage: spawn <template> <x> <y> [faction]";
+                return "Usage: spawn <template> <x> <y> [faction]\n" +
+                       "Omit the coordinates to spawn an item into your inventory instead.";
+
             var template = args[0];
             if (!int.TryParse(args[1], out int x) || !int.TryParse(args[2], out int y))
                 return "Invalid coordinates";

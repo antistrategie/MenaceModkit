@@ -1042,9 +1042,8 @@ end)
 |-------|---------------|-------------|
 | `actor_state_changed` | `{actor, actor_ptr}` | Actor state changes |
 | `morale_changed` | `{actor, actor_ptr, state}` | Morale state changes |
-| `hp_changed` | `{actor, actor_ptr, old_hp, new_hp, delta}` | HP changes |
+| `hp_changed` | `{actor, actor_ptr, hp_pct}` | HP changes, as a remaining fraction |
 | `armor_changed` | `{actor, actor_ptr}` | Armor changes |
-| `ap_changed` | `{actor, actor_ptr, old_ap, new_ap, delta}` | Action points change |
 
 #### Visibility Events
 
@@ -1246,13 +1245,9 @@ end)
 
 -- React to HP changes
 on("hp_changed", function(data)
-    if data.delta < 0 then
-        log(data.actor .. " lost " .. (-data.delta) .. " HP")
-        if data.new_hp < 20 then
-            warn(data.actor .. " is critically wounded!")
-        end
-    else
-        log(data.actor .. " healed " .. data.delta .. " HP")
+    log(data.actor .. " is at " .. math.floor(data.hp_pct * 100) .. "% HP")
+    if data.hp_pct < 0.2 then
+        warn(data.actor .. " is critically wounded!")
     end
 end)
 

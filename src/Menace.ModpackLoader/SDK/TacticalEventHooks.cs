@@ -48,9 +48,8 @@ public static class TacticalEventHooks
     // Actor State Events
     public static event Action<IntPtr> OnActorStateChanged;                  // actor
     public static event Action<IntPtr, int> OnMoraleStateChanged;            // actor, newState
-    public static event Action<IntPtr, int, int> OnHitpointsChanged;         // actor, oldHp, newHp
+    public static event Action<IntPtr, float> OnHitpointsChanged;            // entity, remaining hp fraction
     public static event Action<IntPtr> OnArmorChanged;                       // actor
-    public static event Action<IntPtr, int, int> OnActionPointsChanged;      // actor, oldAp, newAp
 
     // Visibility Events
     public static event Action<IntPtr, IntPtr> OnDiscovered;                 // discovered, discoverer
@@ -104,12 +103,14 @@ public static class TacticalEventHooks
                 return;
             }
 
-            // Cache types
-            _tacticalManagerType = gameAssembly.GetType("Menace.Tactical.TacticalManager");
-            _actorType = gameAssembly.GetType("Menace.Tactical.Actor");
-            _entityType = gameAssembly.GetType("Menace.Tactical.Entity");
-            _skillType = gameAssembly.GetType("Menace.Tactical.Skills.Skill");
-            _tileType = gameAssembly.GetType("Menace.Tactical.Tile");
+            // Cache types. These go through FindManagedProxy because IL2CppInterop renames the
+            // namespace ("Il2CppMenace.Tactical.Actor"), so asking the assembly for the game's
+            // own name silently returns null and every hook below goes missing.
+            _tacticalManagerType = GameType.FindManagedProxy("Menace.Tactical.TacticalManager");
+            _actorType = GameType.FindManagedProxy("Menace.Tactical.Actor");
+            _entityType = GameType.FindManagedProxy("Menace.Tactical.Entity");
+            _skillType = GameType.FindManagedProxy("Menace.Tactical.Skills.Skill");
+            _tileType = GameType.FindManagedProxy("Menace.Tactical.Tile");
 
             if (_tacticalManagerType == null)
             {
@@ -132,7 +133,8 @@ public static class TacticalEventHooks
             patchCount += PatchMethod(harmony, "InvokeOnMoraleStateChanged", nameof(OnMoraleStateChanged_Postfix));
             patchCount += PatchMethod(harmony, "InvokeOnHitpointsChanged", nameof(OnHitpointsChanged_Postfix));
             patchCount += PatchMethod(harmony, "InvokeOnArmorChanged", nameof(OnArmorChanged_Postfix));
-            patchCount += PatchMethod(harmony, "InvokeOnActionPointsChanged", nameof(OnActionPointsChanged_Postfix));
+            // Action points have no InvokeOn method on TacticalManager in the shipped game, so
+            // there is nothing to hook for them.
 
             patchCount += PatchMethod(harmony, "InvokeOnDiscovered", nameof(OnDiscovered_Postfix));
             patchCount += PatchMethod(harmony, "InvokeOnVisibleToPlayer", nameof(OnVisibleToPlayer_Postfix));
@@ -244,6 +246,18 @@ public static class TacticalEventHooks
         return IntPtr.Zero;
     }
 
+    // Every postfix below reads its arguments out of Harmony's __args array rather than declaring
+    // them as named parameters. Harmony matches named patch parameters against the target's own
+    // parameter names, and the game names them with a leading underscore ("_target", "_actor"),
+    // which is what silently kept every hook here from binding. Reading by position also means a
+    // renamed parameter no longer breaks anything, and the comment above each mapping records the
+    // signature it was derived from so a reordered one is easy to spot.
+
+    private static object Arg(object[] args, int index) => GameMember.Arg(args, index);
+    private static int ArgInt(object[] args, int index) => GameMember.ArgInt(args, index);
+    private static float ArgFloat(object[] args, int index) => GameMember.ArgFloat(args, index);
+    private static bool ArgBool(object[] args, int index) => GameMember.ArgBool(args, index);
+
     private static string GetName(object obj)
     {
         if (obj == null) return "<null>";
@@ -354,8 +368,13 @@ public static class TacticalEventHooks
 
     // --- Combat Events ---
 
-    private static void OnDeath_Postfix(object __instance, object entity, object killer, int factionId)
+    // InvokeOnDeath(Entity _target, Entity _killer, int _killerFaction)
+    private static void OnDeath_Postfix(object __instance, object[] __args)
     {
+        var entity = Arg(__args, 0);
+        var killer = Arg(__args, 1);
+        var factionId = ArgInt(__args, 2);
+
         var entityPtr = GetPointer(entity);
         var killerPtr = GetPointer(killer);
 
@@ -371,8 +390,13 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnDamageReceived_Postfix(object __instance, object target, object attacker, object skill)
+    // InvokeOnDamageReceived(Entity _entity, Entity _attacker, Skill _skill, DamageInfo _damageInfo)
+    private static void OnDamageReceived_Postfix(object __instance, object[] __args)
     {
+        var target = Arg(__args, 0);
+        var attacker = Arg(__args, 1);
+        var skill = Arg(__args, 2);
+
         var targetPtr = GetPointer(target);
         var attackerPtr = GetPointer(attacker);
         var skillPtr = GetPointer(skill);
@@ -390,8 +414,13 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnAttackMissed_Postfix(object __instance, object attacker, object target)
+    // InvokeOnAttackMissed(Entity _entity, Actor _attacker, Skill _skill)
+    // The target comes first here, which the old named parameters had the wrong way round.
+    private static void OnAttackMissed_Postfix(object __instance, object[] __args)
     {
+        var target = Arg(__args, 0);
+        var attacker = Arg(__args, 1);
+
         var attackerPtr = GetPointer(attacker);
         var targetPtr = GetPointer(target);
 
@@ -406,8 +435,12 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnAttackTileStart_Postfix(object __instance, object attacker, object tile)
+    // InvokeOnAttackTileStart(Actor _actor, Skill _skill, Tile _targetTile, float _attackDurationInSec)
+    private static void OnAttackTileStart_Postfix(object __instance, object[] __args)
     {
+        var attacker = Arg(__args, 0);
+        var tile = Arg(__args, 2);
+
         var attackerPtr = GetPointer(attacker);
         var tilePtr = GetPointer(tile);
 
@@ -421,8 +454,11 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnBleedingOut_Postfix(object __instance, object actor)
+    // InvokeOnBleedingOut(BaseUnitLeader _leader, int _remainingRounds)
+    private static void OnBleedingOut_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+
         var actorPtr = GetPointer(actor);
 
         OnBleedingOut?.Invoke(actorPtr);
@@ -434,8 +470,11 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnStabilized_Postfix(object __instance, object actor)
+    // InvokeOnStabilized(BaseUnitLeader _leader, Actor _savior)
+    private static void OnStabilized_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+
         var actorPtr = GetPointer(actor);
 
         OnStabilized?.Invoke(actorPtr);
@@ -447,8 +486,11 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnSuppressed_Postfix(object __instance, object actor)
+    // InvokeOnSuppressed(Actor _actor)
+    private static void OnSuppressed_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+
         var actorPtr = GetPointer(actor);
 
         OnSuppressed?.Invoke(actorPtr);
@@ -460,8 +502,14 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnSuppressionApplied_Postfix(object __instance, object target, object attacker, float amount)
+    // InvokeOnSuppressionApplied(Actor _actor, float _change, Entity _suppressor)
+    // The amount sits between the two entities, not after them.
+    private static void OnSuppressionApplied_Postfix(object __instance, object[] __args)
     {
+        var target = Arg(__args, 0);
+        var amount = ArgFloat(__args, 1);
+        var attacker = Arg(__args, 2);
+
         var targetPtr = GetPointer(target);
         var attackerPtr = GetPointer(attacker);
 
@@ -479,8 +527,11 @@ public static class TacticalEventHooks
 
     // --- Actor State Events ---
 
-    private static void OnActorStateChanged_Postfix(object __instance, object actor)
+    // InvokeOnActorStateChanged(Actor _actor, ActorState _oldState, ActorState _newState)
+    private static void OnActorStateChanged_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+
         var actorPtr = GetPointer(actor);
 
         OnActorStateChanged?.Invoke(actorPtr);
@@ -492,8 +543,12 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnMoraleStateChanged_Postfix(object __instance, object actor, int newState)
+    // InvokeOnMoraleStateChanged(Actor _actor, MoraleState _moraleState)
+    private static void OnMoraleStateChanged_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+        var newState = ArgInt(__args, 1);
+
         var actorPtr = GetPointer(actor);
 
         OnMoraleStateChanged?.Invoke(actorPtr, newState);
@@ -506,24 +561,31 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnHitpointsChanged_Postfix(object __instance, object actor, int oldHp, int newHp)
+    // InvokeOnHitpointsChanged(Entity _entity, float _hitpointsPct, int _animationDurationInMs)
+    // The game reports a remaining-health fraction, not before/after values, so that is what
+    // gets published rather than a guess at old and new hit points.
+    private static void OnHitpointsChanged_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+        var hitpointsPct = ArgFloat(__args, 1);
+
         var actorPtr = GetPointer(actor);
 
-        OnHitpointsChanged?.Invoke(actorPtr, oldHp, newHp);
+        OnHitpointsChanged?.Invoke(actorPtr, hitpointsPct);
 
         FireLuaEvent("hp_changed", new Dictionary<string, object>
         {
             ["actor"] = GetName(actor),
             ["actor_ptr"] = actorPtr.ToInt64(),
-            ["old_hp"] = oldHp,
-            ["new_hp"] = newHp,
-            ["delta"] = newHp - oldHp
+            ["hp_pct"] = hitpointsPct
         });
     }
 
-    private static void OnArmorChanged_Postfix(object __instance, object actor)
+    // InvokeOnArmorChanged(Entity _entity, float _armorDurability, int _armor, int _animationDurationInMs)
+    private static void OnArmorChanged_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+
         var actorPtr = GetPointer(actor);
 
         OnArmorChanged?.Invoke(actorPtr);
@@ -535,26 +597,15 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnActionPointsChanged_Postfix(object __instance, object actor, int oldAp, int newAp)
-    {
-        var actorPtr = GetPointer(actor);
-
-        OnActionPointsChanged?.Invoke(actorPtr, oldAp, newAp);
-
-        FireLuaEvent("ap_changed", new Dictionary<string, object>
-        {
-            ["actor"] = GetName(actor),
-            ["actor_ptr"] = actorPtr.ToInt64(),
-            ["old_ap"] = oldAp,
-            ["new_ap"] = newAp,
-            ["delta"] = newAp - oldAp
-        });
-    }
 
     // --- Visibility Events ---
 
-    private static void OnDiscovered_Postfix(object __instance, object discovered, object discoverer)
+    // InvokeOnDiscovered(Entity _entity, Actor _discoverer)
+    private static void OnDiscovered_Postfix(object __instance, object[] __args)
     {
+        var discovered = Arg(__args, 0);
+        var discoverer = Arg(__args, 1);
+
         var discoveredPtr = GetPointer(discovered);
         var discovererPtr = GetPointer(discoverer);
 
@@ -569,8 +620,11 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnVisibleToPlayer_Postfix(object __instance, object entity)
+    // InvokeOnVisibleToPlayer(Actor _actor)
+    private static void OnVisibleToPlayer_Postfix(object __instance, object[] __args)
     {
+        var entity = Arg(__args, 0);
+
         var entityPtr = GetPointer(entity);
 
         OnVisibleToPlayer?.Invoke(entityPtr);
@@ -582,8 +636,11 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnHiddenToPlayer_Postfix(object __instance, object entity)
+    // InvokeOnHiddenToPlayer(Actor _actor)
+    private static void OnHiddenToPlayer_Postfix(object __instance, object[] __args)
     {
+        var entity = Arg(__args, 0);
+
         var entityPtr = GetPointer(entity);
 
         OnHiddenToPlayer?.Invoke(entityPtr);
@@ -597,9 +654,14 @@ public static class TacticalEventHooks
 
     // --- Movement Events ---
 
-    private static void OnMovement_Postfix(object __instance, object actor, object fromTile, object toTile,
-        int action, object container)
+    // InvokeOnMovement(Actor _actor, Tile _from, Tile _to, MovementAction _action, Entity _container)
+    private static void OnMovement_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+        var fromTile = Arg(__args, 1);
+        var toTile = Arg(__args, 2);
+        var action = ArgInt(__args, 3);
+
         var actorPtr = GetPointer(actor);
         var fromPtr = GetPointer(fromTile);
         var toPtr = GetPointer(toTile);
@@ -616,8 +678,12 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnMovementFinished_Postfix(object __instance, object actor, object tile)
+    // InvokeOnMovementFinished(Actor _actor, Tile _to)
+    private static void OnMovementFinished_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+        var tile = Arg(__args, 1);
+
         var actorPtr = GetPointer(actor);
         var tilePtr = GetPointer(tile);
 
@@ -633,8 +699,13 @@ public static class TacticalEventHooks
 
     // --- Skill Events ---
 
-    private static void OnSkillUse_Postfix(object __instance, object user, object skill, object targetParams)
+    // InvokeOnSkillUse(Actor _actor, Skill _skill, Tile _targetTile)
+    private static void OnSkillUse_Postfix(object __instance, object[] __args)
     {
+        var user = Arg(__args, 0);
+        var skill = Arg(__args, 1);
+        var targetParams = Arg(__args, 2);
+
         var userPtr = GetPointer(user);
         var skillPtr = GetPointer(skill);
         var targetPtr = GetPointer(targetParams);
@@ -657,8 +728,11 @@ public static class TacticalEventHooks
         }
     }
 
-    private static void OnAfterSkillUse_Postfix(object __instance, object skill)
+    // InvokeOnAfterSkillUse(Skill _skill)
+    private static void OnAfterSkillUse_Postfix(object __instance, object[] __args)
     {
+        var skill = Arg(__args, 0);
+
         var skillPtr = GetPointer(skill);
 
         OnSkillCompleted?.Invoke(skillPtr);
@@ -670,8 +744,12 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnSkillAdded_Postfix(object __instance, object actor, object skill)
+    // InvokeOnSkillAdded(Actor _receiver, Skill _skill, Actor _source, bool _success)
+    private static void OnSkillAdded_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+        var skill = Arg(__args, 1);
+
         var actorPtr = GetPointer(actor);
         var skillPtr = GetPointer(skill);
 
@@ -686,8 +764,11 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnOffmapAbilityUsed_Postfix(object __instance, object ability)
+    // InvokeOnOffmapAbilityUsed(OffmapAbilityInstance _offmapAbilityInstance, Tile _targetTile)
+    private static void OnOffmapAbilityUsed_Postfix(object __instance, object[] __args)
     {
+        var ability = Arg(__args, 0);
+
         var abilityPtr = GetPointer(ability);
 
         OnOffmapAbilityUsed?.Invoke(abilityPtr);
@@ -699,8 +780,11 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnOffmapAbilityCanceled_Postfix(object __instance, object ability)
+    // InvokeOnOffmapAbilityCanceled(OffmapAbilityInstance _offmapAbilityInstance)
+    private static void OnOffmapAbilityCanceled_Postfix(object __instance, object[] __args)
     {
+        var ability = Arg(__args, 0);
+
         var abilityPtr = GetPointer(ability);
 
         OnOffmapAbilityCanceled?.Invoke(abilityPtr);
@@ -714,8 +798,11 @@ public static class TacticalEventHooks
 
     // --- Turn/Round Events ---
 
-    private static void OnTurnEnd_Postfix(object __instance, object actor)
+    // InvokeOnTurnEnd(Actor _actor)
+    private static void OnTurnEnd_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+
         var actorPtr = GetPointer(actor);
 
         OnTurnEnd?.Invoke(actorPtr);
@@ -726,7 +813,7 @@ public static class TacticalEventHooks
         try
         {
             var gameObj = new GameObj(actorPtr);
-            faction = gameObj.ReadInt(0xBC); // OFFSET_ACTOR_FACTION_ID
+            faction = gameObj.ReadInt("m_FactionID", 0xBC); // OFFSET_ACTOR_FACTION_ID
             factionName = TacticalController.GetFactionName((FactionType)faction);
         }
         catch { }
@@ -761,8 +848,15 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnSetActiveActor_Postfix(object __instance, object actor, bool isNewTurn)
+    // SetActiveActor(Actor _actor, bool _endTurn)
+    // CAUTION: the game calls the flag "_endTurn"; treating true as "a new turn is starting" is
+    // an inherited assumption this hook has never exercised in-game (the old named-parameter
+    // patch never bound). If turn_start fires at the wrong moments, this gate is the suspect.
+    private static void OnSetActiveActor_Postfix(object __instance, object[] __args)
     {
+        var actor = Arg(__args, 0);
+        var isNewTurn = ArgBool(__args, 1);
+
         // Only fire turn_start if this is actually a new turn (not just selecting an actor)
         if (!isNewTurn || actor == null) return;
 
@@ -777,7 +871,7 @@ public static class TacticalEventHooks
         try
         {
             var gameObj = new GameObj(actorPtr);
-            faction = gameObj.ReadInt(0xBC); // OFFSET_ACTOR_FACTION_ID
+            faction = gameObj.ReadInt("m_FactionID", 0xBC); // OFFSET_ACTOR_FACTION_ID
             factionName = TacticalController.GetFactionName((FactionType)faction);
         }
         catch { }
@@ -793,8 +887,11 @@ public static class TacticalEventHooks
 
     // --- Entity Events ---
 
-    private static void OnEntitySpawned_Postfix(object __instance, object entity)
+    // InvokeOnEntitySpawned(Entity _entity)
+    private static void OnEntitySpawned_Postfix(object __instance, object[] __args)
     {
+        var entity = Arg(__args, 0);
+
         var entityPtr = GetPointer(entity);
 
         OnEntitySpawned?.Invoke(entityPtr);
@@ -806,8 +903,12 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnElementDeath_Postfix(object __instance, object element)
+    // InvokeOnElementDeath(Entity _entity, Element _element, Entity _attacker, DamageInfo _damageInfo)
+    // The element is the second argument, not the first.
+    private static void OnElementDeath_Postfix(object __instance, object[] __args)
     {
+        var element = Arg(__args, 1);
+
         var elementPtr = GetPointer(element);
 
         OnElementDeath?.Invoke(elementPtr);
@@ -819,8 +920,11 @@ public static class TacticalEventHooks
         });
     }
 
-    private static void OnElementMalfunction_Postfix(object __instance, object element)
+    // InvokeOnElementMalfunction(Element _element, Skill _skill)
+    private static void OnElementMalfunction_Postfix(object __instance, object[] __args)
     {
+        var element = Arg(__args, 0);
+
         var elementPtr = GetPointer(element);
 
         OnElementMalfunction?.Invoke(elementPtr);
@@ -834,8 +938,12 @@ public static class TacticalEventHooks
 
     // --- Mission Events ---
 
-    private static void OnObjectiveStateChanged_Postfix(object __instance, object objective, int newState)
+    // InvokeOnObjectiveStateChanged(Objective _objective, ObjectiveState _oldState, ObjectiveState _newState)
+    private static void OnObjectiveStateChanged_Postfix(object __instance, object[] __args)
     {
+        var objective = Arg(__args, 0);
+        var newState = ArgInt(__args, 2);
+
         var objectivePtr = GetPointer(objective);
 
         OnObjectiveStateChanged?.Invoke(objectivePtr, newState);

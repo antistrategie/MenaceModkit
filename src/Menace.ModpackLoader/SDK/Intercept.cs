@@ -1818,24 +1818,24 @@ public static class Intercept
             }
 
             // Cache types for postfix patches
-            _entityPropertiesType = gameAssembly.GetType("Menace.Tactical.EntityProperties");
-            _skillType = gameAssembly.GetType("Menace.Tactical.Skills.Skill");
-            _actorType = gameAssembly.GetType("Menace.Tactical.Actor");
-            _entityType = gameAssembly.GetType("Menace.Tactical.Entity");
-            _tileType = gameAssembly.GetType("Menace.Tactical.Tile");
-            _baseTileType = gameAssembly.GetType("Menace.Tactical.BaseTile");
-            _lineOfSightType = gameAssembly.GetType("Tactical.LineOfSight");
+            _entityPropertiesType = GameType.FindManagedProxy("Menace.Tactical.EntityProperties");
+            _skillType = GameType.FindManagedProxy("Menace.Tactical.Skills.Skill");
+            _actorType = GameType.FindManagedProxy("Menace.Tactical.Actor");
+            _entityType = GameType.FindManagedProxy("Menace.Tactical.Entity");
+            _tileType = GameType.FindManagedProxy("Menace.Tactical.Tile");
+            _baseTileType = GameType.FindManagedProxy("Menace.Tactical.BaseTile");
+            _lineOfSightType = GameType.FindManagedProxy("Tactical.LineOfSight");
             // Movement types
-            _movementTypeType = gameAssembly.GetType("Menace.Tactical.MovementType");
+            _movementTypeType = GameType.FindManagedProxy("Menace.Tactical.MovementType");
             // Strategy layer types
-            _unitLeaderAttributesType = gameAssembly.GetType("Menace.Strategy.UnitLeaderAttributes");
-            _baseUnitLeaderType = gameAssembly.GetType("Menace.Strategy.BaseUnitLeader");
-            _vehicleType = gameAssembly.GetType("Menace.Strategy.Vehicle");
+            _unitLeaderAttributesType = GameType.FindManagedProxy("Menace.Strategy.UnitLeaderAttributes");
+            _baseUnitLeaderType = GameType.FindManagedProxy("Menace.Strategy.BaseUnitLeader");
+            _vehicleType = GameType.FindManagedProxy("Menace.Strategy.Vehicle");
             // AI types
-            _aiBrainType = gameAssembly.GetType("Menace.Tactical.AI.AIBrain");
-            _agentType = gameAssembly.GetType("Menace.Tactical.AI.Agent");
+            _aiBrainType = GameType.FindManagedProxy("Menace.Tactical.AI.AIBrain");
+            _agentType = GameType.FindManagedProxy("Menace.Tactical.AI.Agent");
             // Pathfinding types
-            _pathfindingProcessType = gameAssembly.GetType("Menace.Tactical.PathfindingProcess");
+            _pathfindingProcessType = GameType.FindManagedProxy("Menace.Tactical.PathfindingProcess");
 
             if (_entityPropertiesType == null)
             {
@@ -1957,7 +1957,7 @@ public static class Intercept
             else
             {
                 // Try alternative namespace
-                _lineOfSightType = gameAssembly.GetType("Menace.Tactical.LineOfSight");
+                _lineOfSightType = GameType.FindManagedProxy("Menace.Tactical.LineOfSight");
                 if (_lineOfSightType != null)
                 {
                     patchCount += PatchLineOfSightStaticMethod("HasLineOfSight", nameof(LineOfSightRayTrace_Postfix));
@@ -2036,7 +2036,7 @@ public static class Intercept
             patchCount += PatchCriterionEvaluate(gameAssembly);
 
             // Apply equipment system patches
-            var itemContainerType = gameAssembly.GetType("Menace.Items.ItemContainer");
+            var itemContainerType = GameType.FindManagedProxy("Menace.Items.ItemContainer");
             if (itemContainerType != null)
             {
                 patchCount += PatchItemContainerMethod(itemContainerType, "Add", nameof(ItemContainerAdd_Prefix));
@@ -2047,7 +2047,7 @@ public static class Intercept
             }
 
             // Apply combat action patches
-            var damageHandlerType = gameAssembly.GetType("Menace.Tactical.Skills.Effects.DamageHandler");
+            var damageHandlerType = GameType.FindManagedProxy("Menace.Tactical.Skills.Effects.DamageHandler");
             if (damageHandlerType != null)
             {
                 patchCount += PatchDamageHandlerMethod(damageHandlerType, "ApplyDamage", nameof(ApplyDamage_Prefix));
@@ -2840,7 +2840,7 @@ public static class Intercept
 
             foreach (var typeName in criterionTypes)
             {
-                var criterionType = gameAssembly.GetType(typeName);
+                var criterionType = GameType.FindManagedProxy(typeName);
                 if (criterionType == null)
                 {
                     SdkLogger.Warning($"[Intercept] Criterion type not found: {typeName}");

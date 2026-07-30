@@ -155,7 +155,7 @@ public static class LuaObjectBindings
                 foreach (var actor in gameActors)
                 {
                     if (actor.IsNull || !actor.IsAlive) continue;
-                    var factionId = actor.ReadInt(0xBC);
+                    var factionId = actor.ReadInt("m_FactionID", 0xBC);
                     if (factionId == 1 || factionId == 2) // Player factions
                     {
                         table[i++] = UserData.Create(new LuaActor(actor.Pointer));
@@ -180,7 +180,7 @@ public static class LuaObjectBindings
                 foreach (var actor in gameActors)
                 {
                     if (actor.IsNull || !actor.IsAlive) continue;
-                    var factionId = actor.ReadInt(0xBC);
+                    var factionId = actor.ReadInt("m_FactionID", 0xBC);
                     if (factionId > 3) // Enemy factions
                     {
                         table[i++] = UserData.Create(new LuaActor(actor.Pointer));

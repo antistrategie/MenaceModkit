@@ -7,17 +7,21 @@ using HarmonyLib;
 namespace Menace.SDK.CustomMaps;
 
 /// <summary>
-/// Harmony patches for custom map parameter injection.
+/// Harmony patches for custom map parameter injection — currently <em>dormant</em>.
 ///
-/// Patches are applied at key points in the map generation pipeline:
-/// 1. MissionTemplate.TryCreateMapLayout - Override seed and generator params
-/// 2. Map.IsInBounds - Allow larger map sizes
-/// 3. Map.ClampToBounds - Allow larger map sizes
-/// 4. OperationTemplate.GetMissionsForDifficulties - Inject custom maps into pools
+/// The patch points below were derived from Ghidra against an older build and none of them
+/// bind to what the game ships: two type names don't exist at all, and the patch method
+/// signatures don't match the real ones (details on each Apply* method). They have never
+/// applied — they failed type resolution at load, one ERROR per launch — so nothing in the
+/// game currently depends on them.
+///
+/// The rest of the feature (registry, config loading, Lua bindings, console commands) is
+/// unaffected; only the in-game injection is switched off. The patch bodies are kept as the
+/// starting point for reviving it, each needing its signature re-derived from the shipped
+/// Assembly-CSharp proxy before being wired back up.
 /// </summary>
 public static class CustomMapPatches
 {
-    private static HarmonyLib.Harmony _harmony;
     private static bool _initialized;
     private static int _currentMapSize = 42; // Default game size
 
@@ -31,7 +35,8 @@ public static class CustomMapPatches
     }
 
     /// <summary>
-    /// Initialize and apply all custom map patches.
+    /// Initialize custom map support. Applies no Harmony patches — see the class remarks and
+    /// the per-patch notes below for what each one would need first.
     /// </summary>
     public static bool Initialize(HarmonyLib.Harmony harmony)
     {
@@ -44,99 +49,44 @@ public static class CustomMapPatches
             return false;
         }
 
-        _harmony = harmony;
-
-        try
-        {
-            // Apply patches
-            ApplyMissionPatches();
-            ApplyMapSizePatches();
-            ApplyMissionPoolPatches();
-            ApplyTileOverridePatches();
-
-            _initialized = true;
-            SdkLogger.Msg("[CustomMaps] Patches initialized");
-            return true;
-        }
-        catch (Exception ex)
-        {
-            ModError.ReportInternal("CustomMapPatches.Initialize", "Failed to apply patches", ex);
-            return false;
-        }
+        _initialized = true;
+        SdkLogger.Msg("[CustomMaps] Initialized (map generation patches not wired)");
+        return true;
     }
 
-    /// <summary>
-    /// Apply patches for mission/map generation parameter override.
-    /// </summary>
-    private static void ApplyMissionPatches()
-    {
-        // Patch MissionTemplate.TryCreateMapLayout to inject custom parameters
-        var patchMethod = typeof(CustomMapPatches).GetMethod(nameof(TryCreateMapLayout_Prefix),
-            BindingFlags.NonPublic | BindingFlags.Static);
-
-        GamePatch.Prefix(_harmony, "Menace.Strategy.Missions.MissionTemplate",
-            "TryCreateMapLayout", patchMethod);
-
-        // Patch for generator iteration
-        var generatorPatchMethod = typeof(CustomMapPatches).GetMethod(nameof(InitGenerators_Postfix),
-            BindingFlags.NonPublic | BindingFlags.Static);
-
-        // This will be the patch point after generators are created but before Init
-        // Exact method name TBD from Ghidra analysis
-    }
-
-    /// <summary>
-    /// Apply patches for map size validation override.
-    /// </summary>
-    private static void ApplyMapSizePatches()
-    {
-        // Patch Map.IsInBounds to use dynamic size
-        var isInBoundsMethod = typeof(CustomMapPatches).GetMethod(nameof(IsInBounds_Prefix),
-            BindingFlags.NonPublic | BindingFlags.Static);
-
-        GamePatch.Prefix(_harmony, "Menace.Tactical.Map", "IsInBounds", isInBoundsMethod);
-
-        // Patch Map.ClampToBounds to use dynamic size
-        var clampMethod = typeof(CustomMapPatches).GetMethod(nameof(ClampToBounds_Prefix),
-            BindingFlags.NonPublic | BindingFlags.Static);
-
-        GamePatch.Prefix(_harmony, "Menace.Tactical.Map", "ClampToBounds", clampMethod);
-    }
-
-    /// <summary>
-    /// Apply patches for mission pool injection.
-    /// </summary>
-    private static void ApplyMissionPoolPatches()
-    {
-        // Patch OperationTemplate.GetMissionsForDifficulties to add custom maps
-        var poolPatchMethod = typeof(CustomMapPatches).GetMethod(nameof(GetMissionsForDifficulties_Postfix),
-            BindingFlags.NonPublic | BindingFlags.Static);
-
-        GamePatch.Postfix(_harmony, "Menace.Strategy.Operations.OperationTemplate",
-            "GetMissionsForDifficulties", poolPatchMethod);
-    }
-
-    /// <summary>
-    /// Apply patches for tile override injection during map generation.
-    /// </summary>
-    private static void ApplyTileOverridePatches()
-    {
-        // Patch OnSecondPass (State 7) to apply tile-level overrides after generation
-        var secondPassPostfixMethod = typeof(CustomMapPatches).GetMethod(nameof(OnSecondPass_Postfix),
-            BindingFlags.NonPublic | BindingFlags.Static);
-
-        // The map generator's OnSecondPass is called after initial layout is complete
-        // This is the ideal hook point for applying tile overrides
-        GamePatch.Postfix(_harmony, "Menace.Tactical.MapGeneration.MapGenerator",
-            "OnSecondPass", secondPassPostfixMethod);
-
-        // Also patch OnLayoutPass (State 3) for zone-aware generator parameter overrides
-        var layoutPassPrefixMethod = typeof(CustomMapPatches).GetMethod(nameof(OnLayoutPass_Prefix),
-            BindingFlags.NonPublic | BindingFlags.Static);
-
-        GamePatch.Prefix(_harmony, "Menace.Tactical.MapGeneration.MapGenerator",
-            "OnLayoutPass", layoutPassPrefixMethod);
-    }
+    // ==================== Patch points (not wired) ====================
+    //
+    // Verified against the shipped Assembly-CSharp IL2CppInterop proxy. Harmony binds
+    // patch parameters by name, so the names below matter as much as the types.
+    //
+    // 1. Mission/generation parameters — TryCreateMapLayout_Prefix
+    //    Target:  Menace.Strategy.Missions.MissionTemplate (exists)
+    //    Shipped: Boolean TryCreateMapLayout(Mission _mission, Int32 _seedOffset)
+    //    Blocker: the prefix takes 'mission'; the parameter is '_mission'.
+    //
+    // 2. Map size override — IsInBounds_Prefix / ClampToBounds_Prefix
+    //    Target:  Menace.Tactical.Map (exists)
+    //    Shipped: IsInBounds(Int32 _x, Int32 _z) | IsInBounds(Vector2Int _tilePos)
+    //             ClampToBounds(RectInt _input) | ClampToBounds(Vector3 _worldPos)
+    //    Blocker: both are overloaded, so they need the overload-aware GamePatch variants.
+    //             IsInBounds_Prefix takes (x, y) and ClampToBounds_Prefix a ref Vector2,
+    //             matching neither. Both also skip the original and substitute a hardcoded
+    //             square, which would override the game's real bounds on every call.
+    //
+    // 3. Mission pool injection — GetMissionsForDifficulties_Postfix
+    //    Target:  Menace.Strategy.OperationTemplate — NOT Menace.Strategy.Operations.*
+    //    Shipped: List<MissionConfig> GetMissionsForDifficulties(
+    //                 IReadOnlyList<MissionDifficultyTemplate>, MissionLayer, Int32)
+    //    Blocker: the postfix takes an 'int layer' that doesn't exist, and its body is a TODO
+    //             pending the MissionConfig construction path.
+    //
+    // 4. Tile overrides — OnSecondPass_Postfix / OnLayoutPass_Prefix
+    //    Target:  Menace.Tactical.Mapgen.BaseMapGenerator — NOT Menace.Tactical.MapGeneration.*
+    //    Shipped: virtual Void OnSecondPass(Map _map, RectInt _areaBounds)
+    //             virtual Boolean OnLayoutPass(Mission _mission, PseudoRandom _rng)
+    //    Blocker: both are virtual and overridden by ChunkGenerator, PropGenerator,
+    //             EnvironmentFeatureGenerator and EnvironmentPropGenerator, so patching the
+    //             base alone would not fire for the generators that actually run.
 
     // ==================== Patch Methods ====================
 

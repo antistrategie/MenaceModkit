@@ -1,7 +1,9 @@
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using Menace.Modkit.App.Models;
 using Menace.Modkit.ModManagement.Tests.Helpers;
 using Xunit;
 
@@ -129,6 +131,43 @@ public sealed class ModDeployServiceTests : IDisposable
 
         Assert.True(File.Exists(Path.Combine(target, "dlls", "Prebuilt.dll")));
         Assert.False(Directory.Exists(Path.Combine(target, "src")));
+    }
+
+    [Fact]
+    public async Task Deploy_CollectsSecurityWarnings_FromCompiledSources()
+    {
+        // The compile itself can't succeed here (no game reference assemblies), but the source
+        // scan runs before any of that — so the caller's sink still gets the findings.
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Scanned"",""code"":{""sources"":[""src/Plugin.cs""]}}");
+        Directory.CreateDirectory(Path.Combine(_sourceDir, "src"));
+        File.WriteAllText(Path.Combine(_sourceDir, "src", "Plugin.cs"),
+            "class Plugin { void Go() { var c = new HttpClient(); Process.Start(\"cmd.exe\"); } }");
+
+        var warnings = new List<SecurityWarning>();
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new ModDeployService(_config).DeployAsync(_sourceDir, securityWarnings: warnings));
+
+        Assert.Contains(warnings, w => w.Category == "Networking" && w.Severity == SecuritySeverity.Danger);
+        Assert.Contains(warnings, w => w.Category == "Process");
+        Assert.All(warnings, w => Assert.Equal("Plugin.cs", w.File));
+    }
+
+    [Fact]
+    public async Task Deploy_PrebuiltDll_IsNeverScanned()
+    {
+        // Documents the gap: no compile happens for a shipped DLL, and the scanner reads C#
+        // source rather than IL — so nothing about that DLL is examined.
+        WriteManifest(@"{""manifestVersion"":2,""name"":""Shipped"",""code"":{""sources"":[""src/Plugin.cs""]}}");
+        Directory.CreateDirectory(Path.Combine(_sourceDir, "dlls"));
+        File.WriteAllText(Path.Combine(_sourceDir, "dlls", "Shipped.dll"), "built");
+        Directory.CreateDirectory(Path.Combine(_sourceDir, "src"));
+        File.WriteAllText(Path.Combine(_sourceDir, "src", "Plugin.cs"),
+            "class Plugin { void Go() { var c = new HttpClient(); } }");
+
+        var warnings = new List<SecurityWarning>();
+        await new ModDeployService(_config).DeployAsync(_sourceDir, securityWarnings: warnings);
+
+        Assert.Empty(warnings);
     }
 
     [Fact]

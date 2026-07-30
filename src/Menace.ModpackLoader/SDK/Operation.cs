@@ -63,7 +63,7 @@ public static class Operation
 
             // Use direct field access at offset +0x58 for Operations
             var strategyStateObj = new GameObj(((Il2CppObjectBase)strategyState).Pointer);
-            var omPtr = strategyStateObj.ReadPtr(0x58);
+            var omPtr = strategyStateObj.ReadPtr("Operations", 0x58);
             if (omPtr == IntPtr.Zero) return GameObj.Null;
             var om = new GameObj(omPtr).ToManaged();
             if (om == null) return GameObj.Null;
@@ -114,7 +114,7 @@ public static class Operation
             var info = new OperationInfo { Pointer = operation.Pointer };
 
             // Get template via direct field access at offset +0x10
-            var templatePtr = operation.ReadPtr(0x10);
+            var templatePtr = operation.ReadPtr("m_Template", 0x10);
             if (templatePtr != IntPtr.Zero)
             {
                 var templateObj = new GameObj(templatePtr);
@@ -159,10 +159,10 @@ public static class Operation
             }
 
             // Get mission info - use direct field read at offset +0x40
-            info.CurrentMissionIndex = operation.ReadInt(0x40);
+            info.CurrentMissionIndex = operation.ReadInt("m_CurrentMissionIdx", 0x40);
 
             // Get missions via direct field access at offset +0x50
-            var missionsPtr = operation.ReadPtr(0x50);
+            var missionsPtr = operation.ReadPtr("m_Missions", 0x50);
             if (missionsPtr != IntPtr.Zero)
             {
                 var missionsList = new GameList(missionsPtr);
@@ -170,8 +170,8 @@ public static class Operation
             }
 
             // Get time info - use direct field reads at +0x5c (m_PassedTime) and +0x58 (m_MaxTimeUntilTimeout)
-            info.TimeSpent = operation.ReadInt(0x5c);
-            info.TimeLimit = operation.ReadInt(0x58);
+            info.TimeSpent = operation.ReadInt("m_PassedTime", 0x5c);
+            info.TimeLimit = operation.ReadInt("m_MaxTimeUntilTimeout", 0x58);
 
             var getRemainingMethod = opType.GetMethod("GetRemainingTime", BindingFlags.Public | BindingFlags.Instance);
             if (getRemainingMethod != null)
@@ -233,7 +233,7 @@ public static class Operation
             if (op.IsNull) return result;
 
             // Get missions via direct field access at offset +0x50
-            var missionsPtr = op.ReadPtr(0x50);
+            var missionsPtr = op.ReadPtr("m_Missions", 0x50);
             if (missionsPtr == IntPtr.Zero) return result;
 
             var missionsList = new GameList(missionsPtr);
@@ -301,7 +301,7 @@ public static class Operation
 
             // OperationsManager at offset +0x58
             var strategyStateObj = new GameObj(((Il2CppObjectBase)strategyState).Pointer);
-            var omPtr = strategyStateObj.ReadPtr(0x58);
+            var omPtr = strategyStateObj.ReadPtr("Operations", 0x58);
             if (omPtr == IntPtr.Zero) return GameObj.Null;
 
             return new GameObj(omPtr);
@@ -357,8 +357,8 @@ public static class Operation
                 }
             }
 
-            // Fallback: Try m_Operations field at offset +0x18
-            var opsPtr = om.ReadPtr(0x18);
+            // Fallback: read m_AvailableOperations directly (raw offset +0x18 if the name fails)
+            var opsPtr = om.ReadPtr("m_AvailableOperations", 0x18);
             if (opsPtr != IntPtr.Zero)
             {
                 var opsList = new GameList(opsPtr);

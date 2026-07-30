@@ -203,6 +203,27 @@ public static class GamePatch
 
         try
         {
+            // Game names ("Menace.Tactical.Map") never match a proxy's FullName, which
+            // IL2CppInterop prefixes ("Il2CppMenace.Tactical.Map") — resolve through the
+            // shared helper rather than matching the name as written.
+            var proxy = GameType.FindManagedProxy(typeName);
+            if (proxy != null)
+            {
+                // A namespaced request that only resolved via the short-name fallback landed on
+                // a DIFFERENT type that happens to share the class name (the game has dozens of
+                // duplicate short names). Patching it would corrupt an unrelated system with
+                // nothing in the log, so refuse loudly instead.
+                if (!GameType.ProxyMatchesRequestedName(proxy, typeName))
+                {
+                    ModError.ReportInternal("GamePatch",
+                        $"Type '{typeName}' not found; a short-name match exists at " +
+                        $"'{proxy.FullName}' but the namespace differs, refusing to patch it");
+                    return null;
+                }
+
+                return proxy;
+            }
+
             var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
                 .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
 
@@ -212,7 +233,7 @@ public static class GamePatch
                 return null;
             }
 
-            // Try exact match first
+            // Fall back to a literal match — covers non-proxy helper types in the game assembly.
             var type = gameAssembly.GetTypes()
                 .FirstOrDefault(t => t.Name == typeName || t.FullName == typeName);
 

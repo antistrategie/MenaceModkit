@@ -231,6 +231,8 @@ public partial class MainWindow : Window
 
     private void OnDismissErrorClick(object? sender, RoutedEventArgs e) => Vm?.DismissError();
 
+    private void OnDismissWarningClick(object? sender, RoutedEventArgs e) => Vm?.DismissWarning();
+
     private void OnToggleClick(object? sender, RoutedEventArgs e)
     {
         if (sender is CheckBox { DataContext: ManagedMod mod })

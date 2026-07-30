@@ -199,6 +199,31 @@ public readonly struct GameObj : IEquatable<GameObj>
         }
     }
 
+    // --- Name-first reads ---
+    //
+    // A field name is resolved through IL2CPP metadata at runtime, so it survives a game update
+    // that moves the field. The offset is kept as a fallback for anything the name lookup can't
+    // resolve (an obfuscated or renamed field), which is the older, more brittle route.
+
+    /// <summary>
+    /// Read a pointer field by name, falling back to a raw offset. The fallback fires only when
+    /// the NAME fails to resolve, never when the resolved field's value is null: after a field
+    /// move, a legitimately-null field must read as null, not as whatever bytes now sit at the
+    /// stale offset (a garbage pointer that crashes on first native use).
+    /// </summary>
+    public IntPtr ReadPtr(string fieldName, uint fallbackOffset)
+    {
+        var offset = ResolveFieldOffset(fieldName);
+        return offset != 0 ? ReadPtr(offset) : ReadPtr(fallbackOffset);
+    }
+
+    /// <summary>Read an int field by name, falling back to a raw offset.</summary>
+    public int ReadInt(string fieldName, uint fallbackOffset)
+    {
+        var offset = ResolveFieldOffset(fieldName);
+        return offset != 0 ? ReadInt(offset) : ReadInt(fallbackOffset);
+    }
+
     // --- Type operations ---
 
     public GameType GetGameType()

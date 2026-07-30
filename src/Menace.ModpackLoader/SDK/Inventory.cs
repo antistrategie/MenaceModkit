@@ -111,16 +111,13 @@ public static class Inventory
                 return GameObj.Null;
             }
 
-            // Access OwnedItems at offset +0x80 (verified via REPL)
-            var ssObj = new GameObj(((Il2CppObjectBase)ss).Pointer);
-            var ownedItemsPtr = ssObj.ReadPtr(0x80);
-            if (ownedItemsPtr == IntPtr.Zero)
-            {
-                SdkLogger.Warning("GetOwnedItems: OwnedItems at +0x80 is null");
-                return GameObj.Null;
-            }
+            // Property, then named field, then the +0x80 offset that was verified via the REPL.
+            // The offset is last because it is the first thing a game update invalidates.
+            var owned = GameMember.ReadPointerMember(ss, ssType, "OwnedItems", "OwnedItems", 0x80);
+            if (owned.IsNull)
+                SdkLogger.Warning("GetOwnedItems: OwnedItems not readable by property, field or offset");
 
-            return new GameObj(ownedItemsPtr);
+            return owned;
         }
         catch (Exception ex)
         {
@@ -140,23 +137,23 @@ public static class Inventory
         {
             EnsureTypesLoaded();
 
-            // Access IHasItemContainer.ItemContainer property
-            // Actor implements IHasItemContainer interface which has ItemContainer property
-            var hasContainerType = GameType.Find("Menace.Items.IHasItemContainer")?.ManagedType;
-            if (hasContainerType != null)
+            // Entity.GetItems() is what the game exposes (Entity, UnitActor, TransientActor and
+            // BaseUnitLeader all override it). An earlier IHasItemContainer.ItemContainer property
+            // is not in the shipped game, which left every inventory command with no container.
+            var entityType = GameType.Find("Menace.Tactical.Entity")?.ManagedType;
+            if (entityType != null)
             {
-                var proxy = GetManagedProxy(entity, hasContainerType);
-                if (proxy != null)
+                var proxy = GetManagedProxy(entity, entityType);
+                var getItems = GameMember.FindMethod(entityType, "GetItems");
+                if (proxy != null && getItems != null)
                 {
-                    var containerProp = hasContainerType.GetProperty("ItemContainer",
-                        BindingFlags.Public | BindingFlags.Instance);
-                    var container = containerProp?.GetValue(proxy);
+                    var container = GameMember.Invoke(getItems, proxy);
                     if (container != null)
                         return new GameObj(((Il2CppObjectBase)container).Pointer);
                 }
             }
 
-            // Fallback: try direct field access via m_ItemContainer
+            // Fallback: read the backing field directly, for anything GetItems does not cover.
             var containerPtr = entity.ReadPtr("m_ItemContainer");
             if (containerPtr != IntPtr.Zero)
                 return new GameObj(containerPtr);
@@ -716,16 +713,8 @@ public static class Inventory
             return $"Total Trade Value: ${total} ({items.Count} items)";
         });
 
-        // spawn <template> - Spawn an item by template name
-        DevConsole.RegisterCommand("spawn", "<template>", "Spawn an item by template name (strategy map only)", args =>
-        {
-            if (args.Length == 0)
-                return "Usage: spawn <template_name>\nExample: spawn weapon.laser_smg\nNote: Must be on strategy map (world map), not in tactical combat or menus.";
-
-            var templateName = args[0];
-            var result = SpawnItem(templateName);
-            return result;
-        });
+        // 'spawn' lives in DevConsole: it dispatches to SpawnItem here for the one-argument
+        // form and to EntitySpawner for the tile form, so both halves stay reachable.
 
         // give <template> - Give item to selected actor (works in tactical)
         DevConsole.RegisterCommand("give", "<template>", "Give item to selected actor (tactical mode)", args =>
@@ -860,12 +849,12 @@ public static class Inventory
             if (templateProxy == null)
                 return "Failed to get template proxy";
 
-            // Call CreateItem on the template
-            var createItemMethod = templateType.GetMethod("CreateItem",
-                BindingFlags.Public | BindingFlags.Instance);
+            // Call CreateItem(guid) on the template. Arity lookup rather than GetMethod(name):
+            // the plain form throws AmbiguousMatchException the moment an overload appears.
+            var createItemMethod = GameMember.FindMethodWithArity(templateType, "CreateItem", 1);
 
             if (createItemMethod == null)
-                return "CreateItem method not found";
+                return "CreateItem(guid) method not found";
 
             // CreateItem takes a GUID string
             var guid = Guid.NewGuid().ToString();
@@ -883,22 +872,52 @@ public static class Inventory
             if (containerProxy == null)
                 return "Failed to get container proxy";
 
-            // Use Place() method to add item to container
-            // ItemContainer.Place(BaseItem item) - adds item to appropriate slot
-            var placeMethod = containerType.GetMethod("Place",
-                BindingFlags.Public | BindingFlags.Instance);
+            // CreateItem is typed to return BaseItem, but the container takes an Item (its
+            // subclass), so re-wrap the same pointer as an Item proxy or the call won't bind.
+            var itemArg = item;
+            var itemManagedType = _itemType?.ManagedType;
+            if (itemManagedType != null && !itemManagedType.IsInstanceOfType(item))
+            {
+                itemArg = GetManagedProxy(new GameObj(((Il2CppObjectBase)item).Pointer), itemManagedType);
+                if (itemArg == null)
+                    return "Failed to get Item proxy for the created item";
+            }
+
+            // Prefer Add(Item, bool addSlotWhenNeeded): it finds a slot itself, where
+            // Place(Item, int index, ItemEventFlags) needs the caller to pick one.
+            // The bool is named in the leading types so the found overload is guaranteed to take
+            // it: the explicit 'true' below must never be silently dropped by a shorter overload.
+            var itemManaged = itemManagedType ?? itemArg.GetType();
+            var addMethod = GameMember.FindMethod(containerType, "Add", itemManaged, typeof(bool));
+
+            if (addMethod != null)
+            {
+                // Add's own flag means "make a slot if none is free", which is what a console
+                // give should do, so it is passed explicitly rather than defaulted to false.
+                var added = GameMember.Invoke(addMethod, containerProxy, itemArg, true);
+                return added is false
+                    ? $"Container refused {templateName} (no free slot for it)"
+                    : $"Gave {templateName} to {actor.GetName()}";
+            }
+
+            // Fallback for builds without Add: place into the first slot and let the container
+            // raise its normal add events (defaulted flags mean no special handling).
+            var placeMethod = GameMember.FindMethod(containerType, "Place", itemManaged);
 
             if (placeMethod != null)
             {
-                placeMethod.Invoke(containerProxy, new object[] { item });
-                return $"Gave {templateName} to {actor.GetName()}";
+                var placed = GameMember.Invoke(placeMethod, containerProxy, itemArg);
+                return placed is false
+                    ? $"Container refused {templateName} (slot 0 unavailable)"
+                    : $"Gave {templateName} to {actor.GetName()}";
             }
 
-            return "Could not find Place() method on ItemContainer";
+            return "Neither Add() nor Place() found on ItemContainer (game update may have changed it)";
         }
         catch (Exception ex)
         {
-            return $"Give failed: {ex.Message}";
+            // Reflection wraps the game's own exception; the wrapper message is useless.
+            return $"Give failed: {(ex.InnerException ?? ex).Message}";
         }
     }
 
@@ -930,12 +949,7 @@ public static class Inventory
                 if (ss == null)
                     return "Error: StrategyState.Get() returned null (are you on the strategy map?)";
 
-                var ssObj = new GameObj(((Il2CppObjectBase)ss).Pointer);
-                var ownedItemsPtr = ssObj.ReadPtr(0x80);
-                if (ownedItemsPtr == IntPtr.Zero)
-                    return "Error: StrategyState OwnedItems at +0x80 is null";
-
-                return "Error: Could not get OwnedItems";
+                return "Error: StrategyState.OwnedItems is null (not readable by property, field or offset)";
             }
 
             var ownedType = _ownedItemsType?.ManagedType;
@@ -946,41 +960,24 @@ public static class Inventory
             if (ownedProxy == null)
                 return "Failed to get OwnedItems proxy";
 
-            // Find the AddItem method - AddItem(BaseItemTemplate, bool showReward)
-            var addItemMethod = ownedType.GetMethod("AddItem",
-                BindingFlags.Public | BindingFlags.Instance,
-                null,
-                new[] { _itemTemplateType.ManagedType, typeof(bool) },
-                null);
+            // The game ships AddItem(BaseItemTemplate, bool showDialog, bool showItemSlotInDialog)
+            // alongside a seven-parameter reward-table variant that starts with an AddItemType.
+            // Matching on "template first, everything after it defaultable" picks the right one
+            // and keeps working when the flag list changes again.
+            var templateManagedType = _itemTemplateType.ManagedType;
+            var addItemMethod = GameMember.FindMethod(ownedType, "AddItem", templateManagedType);
 
             if (addItemMethod == null)
-            {
-                // Try alternate signature
-                var methods = ownedType.GetMethods(BindingFlags.Public | BindingFlags.Instance)
-                    .Where(m => m.Name == "AddItem")
-                    .ToList();
-
-                foreach (var m in methods)
-                {
-                    var ps = m.GetParameters();
-                    if (ps.Length == 2 && ps[1].ParameterType == typeof(bool))
-                    {
-                        addItemMethod = m;
-                        break;
-                    }
-                }
-            }
-
-            if (addItemMethod == null)
-                return "AddItem method not found on OwnedItems";
+                return "AddItem(template, ...) not found on OwnedItems (game update may have changed it)";
 
             // Get template proxy
-            var templateProxy = GetManagedProxy(template, _itemTemplateType.ManagedType);
+            var templateProxy = GetManagedProxy(template, templateManagedType);
             if (templateProxy == null)
                 return "Failed to get template proxy";
 
-            // Call AddItem(template, false) - false = don't show reward UI
-            var item = addItemMethod.Invoke(ownedProxy, new object[] { templateProxy, false });
+            // The trailing flags are all UI switches (show a reward dialog, show the slot in it),
+            // and default to false, so spawning from the console stays silent.
+            var item = GameMember.Invoke(addItemMethod, ownedProxy, templateProxy);
 
             if (item != null)
             {

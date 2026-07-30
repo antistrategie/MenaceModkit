@@ -248,10 +248,14 @@ public class EffectEditorView : UserControl
         };
         stack.Children.Add(negateCheck);
 
-        // Property combo
+        // Property combo. The Damage conditions are excluded: no SDK event supplies a damage
+        // amount (OnHitpointsChanged reports a remaining fraction, OnDamageReceived carries no
+        // number), so offering them generated code with an undefined 'damage' variable.
         var propCombo = new ComboBox
         {
-            ItemsSource = Enum.GetValues<ConditionProperty>(),
+            ItemsSource = Enum.GetValues<ConditionProperty>()
+                .Where(p => p != ConditionProperty.DamageGreaterThan && p != ConditionProperty.DamageLessThan)
+                .ToArray(),
             SelectedItem = cond.Property,
             MinWidth = 150
         };

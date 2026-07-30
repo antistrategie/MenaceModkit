@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Avalonia.Threading;
+using Menace.Modkit.App.Models;   // SecurityWarning (kept its original namespace when extracted)
 using Menace.Modkit.App.Services; // ModLoaderInstaller (kept its original namespace when extracted)
 using Menace.Modkit.ModManagement;
 using Menace.ModManager;
@@ -158,6 +159,23 @@ public sealed class MainViewModel : ReactiveObject
     /// <summary>Surface an error from outside the VM (e.g. a faulted UI event handler).</summary>
     public void ReportError(string message) => ErrorMessage = message;
 
+    private string? _warningMessage;
+    /// <summary>
+    /// Advisory security warnings from the last install, shown until dismissed or the next
+    /// operation starts. Never blocks the install — the scan is advisory by design.
+    /// </summary>
+    public string? WarningMessage
+    {
+        get => _warningMessage;
+        private set
+        {
+            this.RaiseAndSetIfChanged(ref _warningMessage, value);
+            this.RaisePropertyChanged(nameof(HasWarning));
+        }
+    }
+    public bool HasWarning => !string.IsNullOrEmpty(_warningMessage);
+    public void DismissWarning() => WarningMessage = null;
+
     public MainViewModel()
     {
         Refresh();
@@ -210,6 +228,7 @@ public sealed class MainViewModel : ReactiveObject
             return;
 
         ErrorMessage = null;
+        WarningMessage = null;
         Status = busyStatus;
         IsBusy = true;
         try
@@ -540,17 +559,31 @@ public sealed class MainViewModel : ReactiveObject
         return ExecuteAsync(busyStatus, async () =>
         {
             var failures = new List<string>();
+            var warnings = new List<string>();
             foreach (var path in paths)
             {
+                // Advisory findings from the source scan the compile already runs; collected
+                // per mod so a batch drop still attributes them to the right one.
+                var scanned = new List<SecurityWarning>();
+                var installed = true;
                 try
                 {
-                    await Task.Run(() => InstallCoreAsync(path, progress));
+                    await Task.Run(() => InstallCoreAsync(path, progress, scanned));
                 }
                 catch (Exception ex)
                 {
+                    installed = false;
                     failures.Add($"{System.IO.Path.GetFileName(path)}: {ex.Message}");
                 }
+
+                if (scanned.Count > 0)
+                    warnings.Add(DescribeSecurityWarnings(System.IO.Path.GetFileName(path), scanned, installed));
             }
+
+            // Set before any throw below: ExecuteAsync only clears warnings when the *next*
+            // operation starts, so a failed batch can still show what the scan found.
+            if (warnings.Count > 0)
+                WarningMessage = string.Join("\n\n", warnings);
 
             if (failures.Count == 1 && paths.Count == 1)
                 throw new InvalidOperationException(failures[0]);
@@ -560,7 +593,7 @@ public sealed class MainViewModel : ReactiveObject
         });
     }
 
-    private async Task InstallCoreAsync(string path, IProgress<string> progress)
+    private async Task InstallCoreAsync(string path, IProgress<string> progress, ICollection<SecurityWarning> scanned)
     {
         if (ModInstallService.IsArchive(path))
         {
@@ -568,13 +601,13 @@ public sealed class MainViewModel : ReactiveObject
             if (extracted.BareDll != null)
                 _installService.Install(extracted.BareDll);
             else
-                await RouteModDirAsync(extracted.ModRoot!, extracted.Name, progress);
+                await RouteModDirAsync(extracted.ModRoot!, extracted.Name, progress, scanned);
         }
         else if (System.IO.Directory.Exists(path))
         {
             var name = System.IO.Path.GetFileName(
                 path.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar));
-            await RouteModDirAsync(path, name, progress);
+            await RouteModDirAsync(path, name, progress, scanned);
         }
         else if (path.EndsWith(".dll", StringComparison.OrdinalIgnoreCase))
         {
@@ -587,13 +620,44 @@ public sealed class MainViewModel : ReactiveObject
         }
     }
 
-    private async Task RouteModDirAsync(string modDir, string name, IProgress<string> progress)
+    private async Task RouteModDirAsync(string modDir, string name, IProgress<string> progress, ICollection<SecurityWarning> scanned)
     {
         // A modpack goes through deploy (which compiles only if needed); anything else is a copy.
         if (System.IO.File.Exists(System.IO.Path.Combine(modDir, "modpack.json")))
-            await _deployService.DeployAsync(modDir, progress, deployedBy: "standalone");
+            await _deployService.DeployAsync(modDir, progress, deployedBy: "standalone", securityWarnings: scanned);
         else
             _installService.InstallFrom(modDir, name);
+    }
+
+    /// <summary>Cap on listed warnings, so one noisy mod can't push the banner off screen.</summary>
+    private const int MaxListedWarnings = 8;
+
+    /// <summary>
+    /// Render the source scan's findings for the banner: Danger before Warning, file:line
+    /// where known, and an explicit note that the mod was installed anyway (the scan is
+    /// advisory by design, and only ever sees C# source that was compiled here).
+    /// </summary>
+    private static string DescribeSecurityWarnings(string modName, IReadOnlyCollection<SecurityWarning> scanned, bool installed)
+    {
+        var lines = scanned
+            .OrderByDescending(w => w.Severity)
+            .ThenBy(w => w.File, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(w => w.Line)
+            .Select(w => $"  [{w.Severity}] {w.Category}: {w.Message}" +
+                         (string.IsNullOrEmpty(w.File) ? string.Empty : $" — {w.File}:{w.Line}"))
+            .ToList();
+
+        var body = string.Join("\n", lines.Take(MaxListedWarnings));
+        if (lines.Count > MaxListedWarnings)
+            body += $"\n  …and {lines.Count - MaxListedWarnings} more";
+
+        var count = lines.Count == 1 ? "1 security warning" : $"{lines.Count} security warnings";
+        // The scan runs before the compile can fail, so warnings can arrive from a mod that was
+        // never installed; saying "installed anyway" next to a failure banner reads as nonsense.
+        var outcome = installed
+            ? "installed anyway, the scan is advisory only"
+            : "found before the install failed";
+        return $"{modName}: {count} in its C# source ({outcome}):\n{body}";
     }
 
     /// <summary>Delete the selected mod from disk.</summary>

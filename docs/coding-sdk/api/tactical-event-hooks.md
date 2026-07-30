@@ -138,9 +138,8 @@ Monitor changes to actor stats and status.
 |-------|-----------|-----------|-------------|
 | `OnActorStateChanged` | `(IntPtr actor)` | `actor_state_changed` | Actor state changed (stance, cover, etc.) |
 | `OnMoraleStateChanged` | `(IntPtr actor, int newState)` | `morale_changed` | Morale state changed (panicked, shaken, steady) |
-| `OnHitpointsChanged` | `(IntPtr actor, int oldHp, int newHp)` | `hp_changed` | Hit points changed |
+| `OnHitpointsChanged` | `(IntPtr entity, float hpPct)` | `hp_changed` | Hit points changed, as a remaining fraction |
 | `OnArmorChanged` | `(IntPtr actor)` | `armor_changed` | Armor value changed |
-| `OnActionPointsChanged` | `(IntPtr actor, int oldAp, int newAp)` | `ap_changed` | Action points changed |
 
 ### Visibility & Detection
 
@@ -290,24 +289,14 @@ TacticalEventHooks.OnEntitySpawned += (IntPtr entityPtr) =>
 ### React to Low Health
 
 ```csharp
-TacticalEventHooks.OnHitpointsChanged += (IntPtr actorPtr, int oldHp, int newHp) =>
+TacticalEventHooks.OnHitpointsChanged += (IntPtr actorPtr, float hpPct) =>
 {
-    if (newHp <= 0 || oldHp <= newHp)
-        return; // Skip dead or healing actors
+    if (hpPct <= 0f || hpPct > 0.25f)
+        return; // Skip dead actors and anyone still comfortably alive
 
     var actor = new GameObj(actorPtr);
-    var props = actor.GetField<IntPtr>("m_Properties");
-    if (props == IntPtr.Zero) return;
-
-    var propsObj = new GameObj(props);
-    int maxHp = propsObj.GetField<int>("m_MaxHitpoints");
-
-    float hpPct = (float)newHp / maxHp;
-    if (hpPct <= 0.25f)
-    {
-        DevConsole.Log($"{actor.GetName()} is critically wounded! ({newHp}/{maxHp} HP)");
-        // Could trigger berserker mode, panic, etc.
-    }
+    DevConsole.Log($"{actor.GetName()} is critically wounded! ({hpPct:P0} HP remaining)");
+    // Could trigger berserker mode, panic, etc.
 };
 ```
 

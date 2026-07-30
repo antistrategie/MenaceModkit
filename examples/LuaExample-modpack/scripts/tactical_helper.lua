@@ -174,20 +174,11 @@ on("hp_changed", function(data)
     if not data then return end
 
     local actor = data.actor or "unknown"
-    local oldHp = data.old or 0
-    local newHp = data.new or 0
-    local delta = newHp - oldHp
+    local pct = data.hp_pct or 1.0
 
-    if delta < 0 then
-        -- Damage taken (already handled by damage_received usually)
-    elseif delta > 0 then
-        log("[TacticalHelper] HEALED: " .. tostring(actor) .. " +" .. delta .. " HP")
+    if pct < 0.25 then
+        log("[TacticalHelper] CRITICAL: " .. tostring(actor) .. " at " .. math.floor(pct * 100) .. "% HP")
     end
-end)
-
-on("ap_changed", function(data)
-    if not data then return end
-    -- Action points changed - useful for tracking actions
 end)
 
 on("morale_changed", function(data)

@@ -51,7 +51,7 @@ print("Total maps:", maps.count())
 ### Activating Maps
 
 ```lua
--- Set a map as active (will be used for next mission)
+-- Set a map as active (NOTE: currently inert - the loader's map generation patches are not wired, so the override has no in-game effect yet)
 maps.set_active("my_map_id")
 
 -- Check if there's an active override

@@ -122,7 +122,9 @@ public static class CustomMaps
     }
 
     /// <summary>
-    /// Set a map as the active override (will be used for next mission).
+    /// Set a map as the active override. NOTE: currently inert in-game - the registry records
+    /// the override, but the map-generation patches that would consume it are not wired (see
+    /// CustomMapPatches for what re-enabling them needs).
     /// </summary>
     public static void SetActive(string mapId)
     {

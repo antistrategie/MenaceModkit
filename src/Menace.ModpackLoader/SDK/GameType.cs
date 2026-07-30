@@ -210,51 +210,7 @@ public class GameType
 
             try
             {
-                var lastDot = FullName.LastIndexOf('.');
-                var ns = lastDot > 0 ? FullName[..lastDot] : "";
-                var typeName = lastDot > 0 ? FullName[(lastDot + 1)..] : FullName;
-
-                // IL2CppInterop prefixes namespaces with "Il2Cpp"
-                var il2cppFullName = string.IsNullOrEmpty(ns)
-                    ? typeName
-                    : $"Il2Cpp{ns}.{typeName}";
-
-                // Search all loaded assemblies for the type
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    try
-                    {
-                        // First try exact full name match with Il2Cpp prefix
-                        var candidate = asm.GetType(il2cppFullName);
-                        if (IsValidIl2CppProxy(candidate))
-                        {
-                            _managedType = candidate;
-                            return _managedType;
-                        }
-
-                        // Try original full name (some types aren't prefixed but are still proxies)
-                        candidate = asm.GetType(FullName);
-                        if (IsValidIl2CppProxy(candidate))
-                        {
-                            _managedType = candidate;
-                            return _managedType;
-                        }
-                    }
-                    catch
-                    {
-                        // Skip assemblies that throw on GetType
-                    }
-                }
-
-                // Fallback: search by type name only in Assembly-CSharp
-                var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
-                    .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
-
-                if (gameAssembly != null)
-                {
-                    _managedType = gameAssembly.GetTypes()
-                        .FirstOrDefault(t => t.Name == typeName && IsValidIl2CppProxy(t));
-                }
+                _managedType = FindManagedProxy(FullName);
             }
             catch (Exception ex)
             {
@@ -263,6 +219,95 @@ public class GameType
 
             return _managedType;
         }
+    }
+
+    /// <summary>
+    /// Resolve the IL2CppInterop managed proxy <see cref="Type"/> for a game type name
+    /// (e.g. "Menace.Tactical.Map" → Il2CppMenace.Tactical.Map). Interop prefixes proxy
+    /// namespaces with "Il2Cpp", so the game's own name never matches a proxy's FullName
+    /// directly — anything doing plain reflection or Harmony patching needs this. Returns
+    /// null when no proxy exists. Needs no IL2CPP class pointer, so it works for callers
+    /// that only want the managed type.
+    /// </summary>
+    public static Type FindManagedProxy(string fullTypeName)
+    {
+        if (string.IsNullOrEmpty(fullTypeName))
+            return null;
+
+        // Misses are cached too (as null): a miss costs a full GetTypes() sweep of
+        // Assembly-CSharp, and the callers most likely to miss repeatedly (GameApiCheck after a
+        // game update, hook initialisation) run in bursts at startup.
+        lock (_proxyCache)
+        {
+            if (_proxyCache.TryGetValue(fullTypeName, out var cached))
+                return cached;
+        }
+
+        var resolved = FindManagedProxyUncached(fullTypeName);
+        lock (_proxyCache)
+        {
+            _proxyCache[fullTypeName] = resolved;
+        }
+
+        return resolved;
+    }
+
+    private static readonly Dictionary<string, Type> _proxyCache = new();
+
+    private static Type FindManagedProxyUncached(string fullTypeName)
+    {
+        var lastDot = fullTypeName.LastIndexOf('.');
+        var ns = lastDot > 0 ? fullTypeName[..lastDot] : "";
+        var typeName = lastDot > 0 ? fullTypeName[(lastDot + 1)..] : fullTypeName;
+
+        // Already-prefixed names ("Il2CppMenace.Tactical.Map") are passed through as-is.
+        var il2cppFullName = string.IsNullOrEmpty(ns) || ns.StartsWith("Il2Cpp", StringComparison.Ordinal)
+            ? fullTypeName
+            : $"Il2Cpp{ns}.{typeName}";
+
+        // Search all loaded assemblies for the type
+        foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+        {
+            try
+            {
+                // First try exact full name match with Il2Cpp prefix
+                var candidate = asm.GetType(il2cppFullName);
+                if (IsValidIl2CppProxy(candidate))
+                    return candidate;
+
+                // Try original full name (some types aren't prefixed but are still proxies)
+                candidate = asm.GetType(fullTypeName);
+                if (IsValidIl2CppProxy(candidate))
+                    return candidate;
+            }
+            catch
+            {
+                // Skip assemblies that throw on GetType
+            }
+        }
+
+        // Fallback: search by type name only in Assembly-CSharp
+        var gameAssembly = AppDomain.CurrentDomain.GetAssemblies()
+            .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+
+        return gameAssembly?.GetTypes()
+            .FirstOrDefault(t => t.Name == typeName && IsValidIl2CppProxy(t));
+    }
+
+    /// <summary>
+    /// True when <paramref name="proxy"/>'s full name is what <paramref name="requestedName"/>
+    /// asks for (allowing the Il2Cpp namespace prefix) — i.e. it was NOT reached via the
+    /// short-name fallback. Callers that go on to patch or mutate should check this: the game
+    /// has many duplicate short names, and the fallback returns whichever enumerates first.
+    /// </summary>
+    public static bool ProxyMatchesRequestedName(Type proxy, string requestedName)
+    {
+        if (proxy == null || string.IsNullOrEmpty(requestedName))
+            return false;
+        // A namespace-less request is a deliberate short-name lookup; any match is a match.
+        if (!requestedName.Contains('.'))
+            return true;
+        return proxy.FullName == requestedName || proxy.FullName == "Il2Cpp" + requestedName;
     }
 
     /// <summary>

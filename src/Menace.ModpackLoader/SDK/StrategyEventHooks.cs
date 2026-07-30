@@ -84,14 +84,15 @@ public static class StrategyEventHooks
                 return;
             }
 
-            // Cache types
-            _rosterType = _gameAssembly.GetType("Menace.Strategy.Roster");
-            _storyFactionType = _gameAssembly.GetType("Menace.Strategy.StoryFaction");
-            _squaddiesType = _gameAssembly.GetType("Menace.Strategy.Squaddies");
-            _operationType = _gameAssembly.GetType("Menace.Strategy.Operation");
-            _blackMarketType = _gameAssembly.GetType("Menace.Strategy.BlackMarket");
-            _eventManagerType = _gameAssembly.GetType("Menace.Strategy.EventManager");
-            _baseUnitLeaderType = _gameAssembly.GetType("Menace.Strategy.BaseUnitLeader");
+            // Cache types via FindManagedProxy: IL2CppInterop prefixes the namespace, so looking
+            // up the game's own name returns null and every patch below is skipped in silence.
+            _rosterType = GameType.FindManagedProxy("Menace.Strategy.Roster");
+            _storyFactionType = GameType.FindManagedProxy("Menace.Strategy.StoryFaction");
+            _squaddiesType = GameType.FindManagedProxy("Menace.Strategy.Squaddies");
+            _operationType = GameType.FindManagedProxy("Menace.Strategy.Operation");
+            _blackMarketType = GameType.FindManagedProxy("Menace.Strategy.BlackMarket");
+            _eventManagerType = GameType.FindManagedProxy("Menace.Strategy.EventManager");
+            _baseUnitLeaderType = GameType.FindManagedProxy("Menace.Strategy.BaseUnitLeader");
 
             int patchCount = 0;
 
@@ -121,7 +122,7 @@ public static class StrategyEventHooks
             if (_squaddiesType != null)
             {
                 patchCount += PatchMethod(harmony, _squaddiesType, "Kill", nameof(SquaddieKill_Postfix));
-                patchCount += PatchMethod(harmony, _squaddiesType, "AddAlive", nameof(SquaddieAddAlive_Postfix));
+                patchCount += PatchMethod(harmony, _squaddiesType, "TryAddAlive", nameof(SquaddieAddAlive_Postfix));
             }
 
             // Operation patches
@@ -140,7 +141,8 @@ public static class StrategyEventHooks
             if (_blackMarketType != null)
             {
                 patchCount += PatchMethod(harmony, _blackMarketType, "AddItem", nameof(BlackMarketAddItem_Postfix));
-                patchCount += PatchMethod(harmony, _blackMarketType, "FillUp", nameof(BlackMarketFillUp_Postfix));
+                // Restocking is Restock(bool, bool) in the shipped game, not FillUp.
+                patchCount += PatchMethod(harmony, _blackMarketType, "Restock", nameof(BlackMarketFillUp_Postfix));
             }
 
             _initialized = true;
@@ -195,6 +197,12 @@ public static class StrategyEventHooks
             return il2cppObj.Pointer;
         return IntPtr.Zero;
     }
+
+    // The postfixes read their arguments positionally out of Harmony's __args, because Harmony
+    // binds named patch parameters against the game's own names ("_leader", "_change") and the
+    // mismatch is silent. The comment above each postfix records the signature it maps.
+    private static object Arg(object[] args, int index) => GameMember.Arg(args, index);
+    private static int ArgInt(object[] args, int index) => GameMember.ArgInt(args, index);
 
     private static string GetName(object obj)
     {
@@ -275,8 +283,11 @@ public static class StrategyEventHooks
 
     // --- Roster Events ---
 
-    private static void HireLeader_Postfix(object __instance, object __result, object template)
+    // Roster.HireLeader(UnitLeaderTemplate _leaderTemplate)
+    private static void HireLeader_Postfix(object __instance, object __result, object[] __args)
     {
+        var template = Arg(__args, 0);
+
         if (__result == null) return; // Hire failed
 
         var leaderPtr = GetPointer(__result);
@@ -290,8 +301,11 @@ public static class StrategyEventHooks
         });
     }
 
-    private static void DismissLeader_Postfix(object __instance, bool __result, object leader)
+    // Roster.TryDismissLeader(BaseUnitLeader _leader)
+    private static void DismissLeader_Postfix(object __instance, bool __result, object[] __args)
     {
+        var leader = Arg(__args, 0);
+
         if (!__result) return; // Dismiss failed
 
         var leaderPtr = GetPointer(leader);
@@ -304,8 +318,11 @@ public static class StrategyEventHooks
         });
     }
 
-    private static void OnPermanentDeath_Postfix(object __instance, object leader)
+    // Roster.OnPermanentDeath(BaseUnitLeader _leader)
+    private static void OnPermanentDeath_Postfix(object __instance, object[] __args)
     {
+        var leader = Arg(__args, 0);
+
         var leaderPtr = GetPointer(leader);
         OnLeaderPermadeath?.Invoke(leaderPtr);
 
@@ -316,8 +333,11 @@ public static class StrategyEventHooks
         });
     }
 
-    private static void AddPerk_Postfix(object __instance, object perk)
+    // BaseUnitLeader.AddPerk(PerkTemplate _perk, bool _spendPromotionPoints)
+    private static void AddPerk_Postfix(object __instance, object[] __args)
     {
+        var perk = Arg(__args, 0);
+
         var leaderPtr = GetPointer(__instance);
         OnLeaderLevelUp?.Invoke(leaderPtr);
 
@@ -331,8 +351,11 @@ public static class StrategyEventHooks
 
     // --- Faction Events ---
 
-    private static void ChangeTrust_Postfix(object __instance, int delta)
+    // StoryFaction.ChangeTrust(int _change)
+    private static void ChangeTrust_Postfix(object __instance, object[] __args)
     {
+        var delta = ArgInt(__args, 0);
+
         if (delta == 0) return;
 
         var factionPtr = GetPointer(__instance);
@@ -346,8 +369,11 @@ public static class StrategyEventHooks
         });
     }
 
-    private static void SetStatus_Postfix(object __instance, int status)
+    // StoryFaction.SetStatus(StoryFactionStatus _status)
+    private static void SetStatus_Postfix(object __instance, object[] __args)
     {
+        var status = ArgInt(__args, 0);
+
         var factionPtr = GetPointer(__instance);
         OnFactionStatusChanged?.Invoke(factionPtr, status);
 
@@ -359,8 +385,11 @@ public static class StrategyEventHooks
         });
     }
 
-    private static void UnlockUpgrade_Postfix(object __instance, object upgrade)
+    // StoryFaction.UnlockUpgrade(ShipUpgradeTemplate _upgrade)
+    private static void UnlockUpgrade_Postfix(object __instance, object[] __args)
     {
+        var upgrade = Arg(__args, 0);
+
         var factionPtr = GetPointer(__instance);
         var upgradePtr = GetPointer(upgrade);
 
@@ -377,8 +406,11 @@ public static class StrategyEventHooks
 
     // --- Squaddie Events ---
 
-    private static void SquaddieKill_Postfix(object __instance, bool __result, int squaddieId)
+    // Squaddies.Kill(int _squaddieId)
+    private static void SquaddieKill_Postfix(object __instance, bool __result, object[] __args)
     {
+        var squaddieId = ArgInt(__args, 0);
+
         if (!__result) return; // Kill failed
 
         OnSquaddieKilled?.Invoke(squaddieId);
@@ -389,8 +421,16 @@ public static class StrategyEventHooks
         });
     }
 
-    private static void SquaddieAddAlive_Postfix(object __instance, object squaddie)
+    // Squaddies.TryAddAlive(int _maxSquaddies, HomePlanetType _homePlanet, Nullable<Gender> _gender,
+    //                       Nullable<SkinColor> _skinColor, string _name, string _nickname)
+    // No squaddie object is handed to the caller, so the event carries the nickname it was created
+    // with plus the resulting alive count.
+    private static void SquaddieAddAlive_Postfix(object __instance, bool __result, object[] __args)
     {
+        if (!__result) return; // the roster was full
+
+        var nickname = Arg(__args, 5) as string ?? Arg(__args, 4) as string ?? "";
+
         // Get alive count from the Squaddies instance
         int count = 0;
         try
@@ -408,15 +448,19 @@ public static class StrategyEventHooks
 
         FireLuaEvent("squaddie_added", new Dictionary<string, object>
         {
-            ["squaddie"] = GetName(squaddie),
+            ["squaddie"] = nickname,
             ["alive_count"] = count
         });
     }
 
     // --- Operation/Mission Events ---
 
-    private static void EndMission_Postfix(object __instance, object mission)
+    // Operation.EndMission(Mission _mission, MissionResultStats _resultStats,
+    //                      List<BaseItemTemplate> _loot, bool _abortedMission)
+    private static void EndMission_Postfix(object __instance, object[] __args)
     {
+        var mission = Arg(__args, 0);
+
         var missionPtr = GetPointer(mission);
         OnMissionEnded?.Invoke(missionPtr);
 
@@ -451,8 +495,11 @@ public static class StrategyEventHooks
 
     // --- Black Market Events ---
 
-    private static void BlackMarketAddItem_Postfix(object __instance, object item)
+    // BlackMarket.AddItem(BaseItem _item, int _remainingTimeout)
+    private static void BlackMarketAddItem_Postfix(object __instance, object[] __args)
     {
+        var item = Arg(__args, 0);
+
         var itemPtr = GetPointer(item);
         OnBlackMarketItemAdded?.Invoke(itemPtr);
 

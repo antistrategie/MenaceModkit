@@ -126,7 +126,7 @@ function test_register_all()
         -- Tactical events
         "tactical_ready", "turn_start", "turn_end", "round_start", "round_end",
         "actor_killed", "actor_spawned", "damage_received", "attack_missed",
-        "move_start", "move_complete", "skill_used", "hp_changed", "ap_changed",
+        "move_start", "move_complete", "skill_used", "hp_changed",
         "morale_changed", "overwatch_triggered", "critical_hit", "grenade_thrown",
         "entity_spawned", "reinforcements_spawned",
 

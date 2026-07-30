@@ -28,7 +28,6 @@ public enum TriggerEvent
 
     // State
     HitpointsChanged,
-    ActionPointsChanged,
     Suppressed
 }
 
@@ -184,12 +183,8 @@ public class EffectDefinition
             {
                 "var actor = Actor.Get(actorPtr);"
             }),
-            TriggerEvent.HitpointsChanged => ("OnHitpointsChanged", "actorPtr, oldHp, newHp", new List<string>
-            {
-                "var actor = Actor.Get(actorPtr);",
-                "var damage = oldHp - newHp;"
-            }),
-            TriggerEvent.ActionPointsChanged => ("OnActionPointsChanged", "actorPtr, oldAp, newAp", new List<string>
+            // The game reports remaining health as a fraction, not before/after values.
+            TriggerEvent.HitpointsChanged => ("OnHitpointsChanged", "actorPtr, hpPct", new List<string>
             {
                 "var actor = Actor.Get(actorPtr);"
             }),
@@ -225,8 +220,11 @@ public class EffectDefinition
             ConditionProperty.ActorHasEffect => cond.Negate
                 ? $"!actor.HasEffect(\"{cond.StringValue}\")"
                 : $"actor.HasEffect(\"{cond.StringValue}\")",
-            ConditionProperty.DamageGreaterThan => $"damage > {cond.IntValue}",
-            ConditionProperty.DamageLessThan => $"damage < {cond.IntValue}",
+            // No SDK event supplies a damage amount, so these can no longer be authored (the
+            // editor filters them out); graphs saved with one get a compiling no-op plus a
+            // comment rather than a reference to a variable that no trigger defines.
+            ConditionProperty.DamageGreaterThan => $"true /* damage > {cond.IntValue}: no event supplies a damage amount */",
+            ConditionProperty.DamageLessThan => $"true /* damage < {cond.IntValue}: no event supplies a damage amount */",
             ConditionProperty.HealthBelow => $"actor.CombatInfo.CurrentHp < {cond.IntValue}",
             ConditionProperty.HealthAbove => $"actor.CombatInfo.CurrentHp > {cond.IntValue}",
             _ => "true"

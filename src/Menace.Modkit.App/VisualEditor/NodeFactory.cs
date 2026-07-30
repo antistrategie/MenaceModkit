@@ -141,10 +141,9 @@ public static class NodeFactory
                 break;
 
             case TimelineNodeType.TriggerHitpointsChanged:
+                // The event carries a remaining-health fraction, not before/after values.
                 AddOutput(node, "actor", PortDataType.Actor);
-                AddOutput(node, "oldHp", PortDataType.Number);
-                AddOutput(node, "newHp", PortDataType.Number);
-                AddOutput(node, "delta", PortDataType.Number);
+                AddOutput(node, "hpPct", PortDataType.Number);
                 break;
 
             case TimelineNodeType.TriggerSuppressed:

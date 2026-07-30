@@ -54,4 +54,38 @@ public class GameTypeTests
     {
         Assert.Equal("<invalid GameType>", GameType.Invalid.ToString());
     }
+
+    [Fact]
+    public void FindManagedProxy_ResolvesGameNameToPrefixedProxy()
+    {
+        // Callers pass the game's own name; the proxy lives under the Il2Cpp-prefixed
+        // namespace. Matching the name as written finds nothing.
+        var resolved = GameType.FindManagedProxy("Menace.Testing.FakeGameType");
+
+        Assert.Same(typeof(Il2CppMenace.Testing.FakeGameType), resolved);
+    }
+
+    [Fact]
+    public void FindManagedProxy_AcceptsAlreadyPrefixedName()
+    {
+        var resolved = GameType.FindManagedProxy("Il2CppMenace.Testing.FakeGameType");
+
+        Assert.Same(typeof(Il2CppMenace.Testing.FakeGameType), resolved);
+    }
+
+    [Fact]
+    public void FindManagedProxy_ShortName_NeedsTheGameAssembly()
+    {
+        // Namespace-less names only resolve through the short-name scan of Assembly-CSharp,
+        // which isn't loaded outside the game — so this is null here despite the fixture.
+        Assert.Null(GameType.FindManagedProxy("FakeGameType"));
+    }
+
+    [Fact]
+    public void FindManagedProxy_UnknownOrEmptyName_ReturnsNull()
+    {
+        Assert.Null(GameType.FindManagedProxy("Menace.Testing.NoSuchType"));
+        Assert.Null(GameType.FindManagedProxy(""));
+        Assert.Null(GameType.FindManagedProxy(null));
+    }
 }

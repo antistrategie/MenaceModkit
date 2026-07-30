@@ -355,8 +355,11 @@ public static class CustomMapRegistry
             if (args.Length == 0)
                 return "Usage: setmap <id>";
 
+            // Honest reply: the registry accepts the override, but the map-generation patches
+            // that would consume it are not wired (see CustomMapPatches), so it has no in-game
+            // effect yet. Claiming success here sent modders chasing a phantom bug.
             return SetActiveOverride(args[0])
-                ? $"Active map set to: {args[0]}"
+                ? $"Active map set to: {args[0]} (note: map generation patches are not currently wired, so this has no in-game effect yet)"
                 : $"Map not found: {args[0]}";
         });
 
@@ -377,15 +380,19 @@ public static class CustomMapRegistry
             return $"Loaded {count} custom maps";
         });
 
-        // mapinfo <id> - Show detailed map info
-        DevConsole.RegisterCommand("mapinfo", "<id>", "Show custom map details", args =>
-        {
-            if (args.Length == 0)
-                return "Usage: mapinfo <id>";
+        // 'mapinfo' itself is registered once, by TileMap, which dispatches ids to
+        // DescribeMap below. A second registration here silently replaced TileMap's.
 
-            var map = Get(args[0]);
+        RegisterRemainingConsoleCommands();
+    }
+
+    /// <summary>Detail text for one custom map, used by the shared 'mapinfo' command.</summary>
+    public static string DescribeMap(string id)
+    {
+        {
+            var map = Get(id);
             if (map == null)
-                return $"Map not found: {args[0]}";
+                return $"Custom map not found: {id}";
 
             var lines = new List<string>
             {
@@ -413,8 +420,11 @@ public static class CustomMapRegistry
             }
 
             return string.Join("\n", lines);
-        });
+        }
+    }
 
+    private static void RegisterRemainingConsoleCommands()
+    {
         // mapzone <x> <y> - Show zone at position
         DevConsole.RegisterCommand("mapzone", "<x> <y>", "Show zone info at tile position", args =>
         {

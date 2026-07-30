@@ -176,11 +176,9 @@ public class TimelineCodeGenerator
                 break;
 
             case TimelineNodeType.TriggerHitpointsChanged:
+                // The game reports remaining health as a fraction; no before/after values exist.
                 AppendLine("var actor = Actor.Get(actorPtr);");
-                AppendLine("var oldHitpoints = oldHp;");
-                AppendLine("var newHitpoints = newHp;");
-                AppendLine("var delta = newHp - oldHp;");
-                RegisterTriggerVariables(trigger, ("actor", "actor"), ("oldHp", "oldHitpoints"), ("newHp", "newHitpoints"), ("delta", "delta"));
+                RegisterTriggerVariables(trigger, ("actor", "actor"), ("hpPct", "hpPct"));
                 break;
 
             case TimelineNodeType.TriggerSuppressed:
@@ -841,7 +839,7 @@ public class TimelineCodeGenerator
             TimelineNodeType.TriggerTurnEnd => "IntPtr actorPtr",
             TimelineNodeType.TriggerRoundStart => "int roundNumber",
             TimelineNodeType.TriggerRoundEnd => "int roundNumber",
-            TimelineNodeType.TriggerHitpointsChanged => "IntPtr actorPtr, int oldHp, int newHp",
+            TimelineNodeType.TriggerHitpointsChanged => "IntPtr actorPtr, float hpPct",
             TimelineNodeType.TriggerSuppressed => "IntPtr actorPtr",
             _ => ""
         };

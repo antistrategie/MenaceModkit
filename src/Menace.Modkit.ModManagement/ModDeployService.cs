@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -36,8 +37,11 @@ public sealed class ModDeployService
     /// <paramref name="forceCompile"/> recompiles even when a built DLL already exists — for
     /// authoring tools where the sources are the truth; installers of distributed mods leave
     /// it off so a shipped DLL is never rebuilt against missing references.
+    /// <paramref name="securityWarnings"/>, if given, collects the source scan's advisory
+    /// warnings for the caller to surface. It stays empty when no compile happens (a modpack
+    /// shipping its DLL is never scanned — the scanner reads C# source, not IL).
     /// </summary>
-    public async Task<string> DeployAsync(string sourceDir, IProgress<string>? progress = null, CancellationToken ct = default, bool forceCompile = false, string? deployedBy = null)
+    public async Task<string> DeployAsync(string sourceDir, IProgress<string>? progress = null, CancellationToken ct = default, bool forceCompile = false, string? deployedBy = null, ICollection<SecurityWarning>? securityWarnings = null)
     {
         var modsPath = ModsPath ?? throw new InvalidOperationException("Game install path is not set.");
         if (!Directory.Exists(sourceDir))
@@ -60,6 +64,9 @@ public sealed class ModDeployService
         {
             progress?.Report($"Compiling {name}…");
             var result = await _compiler.CompileModpackAsync(manifest, ct).ConfigureAwait(false);
+            if (securityWarnings != null)
+                foreach (var warning in result.SecurityWarnings)
+                    securityWarnings.Add(warning);
             if (!result.Success)
             {
                 var errors = string.Join("\n", result.Diagnostics

@@ -1410,8 +1410,7 @@ public static class LuaApiReference
 
                 // State changes
                 new() { Name = "actor_state_changed", Description = "Fired when actor state changes", InsertText = "on(\"actor_state_changed\", function(data)\n    log(\"State changed\")\nend)", ItemType = LuaApiItemType.Event },
-                new() { Name = "hp_changed", Description = "Fired when HP changes", InsertText = "on(\"hp_changed\", function(data)\n    log(\"HP changed\")\nend)", ItemType = LuaApiItemType.Event },
-                new() { Name = "ap_changed", Description = "Fired when AP changes", InsertText = "on(\"ap_changed\", function(data)\n    log(\"AP changed\")\nend)", ItemType = LuaApiItemType.Event },
+                new() { Name = "hp_changed", Description = "Fired when HP changes (data.hp_pct is the remaining fraction)", InsertText = "on(\"hp_changed\", function(data)\n    log(\"HP changed\")\nend)", ItemType = LuaApiItemType.Event },
                 new() { Name = "armor_changed", Description = "Fired when armor changes", InsertText = "on(\"armor_changed\", function(data)\n    log(\"Armor changed\")\nend)", ItemType = LuaApiItemType.Event },
                 new() { Name = "morale_changed", Description = "Fired when morale changes", InsertText = "on(\"morale_changed\", function(data)\n    log(\"Morale changed\")\nend)", ItemType = LuaApiItemType.Event },
 

@@ -96,7 +96,7 @@ public static class Roster
 
             // Use m_Roster field at offset +0x70 instead of Roster property
             var ssObj = new GameObj(((Il2CppObjectBase)ss).Pointer);
-            var rosterPtr = ssObj.ReadPtr(0x70);
+            var rosterPtr = ssObj.ReadPtr("Roster", 0x70);
             if (rosterPtr == IntPtr.Zero) return GameObj.Null;
 
             return new GameObj(rosterPtr);
@@ -123,7 +123,7 @@ public static class Roster
             EnsureTypesLoaded();
 
             // Use m_HiredLeaders field at offset +0x10
-            var hiredListPtr = roster.ReadPtr(0x10);
+            var hiredListPtr = roster.ReadPtr("m_HiredLeaders", 0x10);
             if (hiredListPtr == IntPtr.Zero) return result;
 
             // Get the typed list using explicit generic type construction
@@ -186,7 +186,7 @@ public static class Roster
             var info = new UnitLeaderInfo { Pointer = leader.Pointer };
 
             // Get template name using m_Template field at offset +0x10
-            var templatePtr = leader.ReadPtr(0x10);
+            var templatePtr = leader.ReadPtr("LeaderTemplate", 0x10);
             if (templatePtr != IntPtr.Zero)
             {
                 var templateObj = new GameObj(templatePtr);
@@ -333,7 +333,7 @@ public static class Roster
             EnsureTypesLoaded();
 
             // Use m_Perks field at offset +0x48
-            var perksPtr = leader.ReadPtr(0x48);
+            var perksPtr = leader.ReadPtr("m_Perks", 0x48);
             if (perksPtr == IntPtr.Zero) return result;
 
             // Get typed list to work around GameObj.ToManaged() failing for generic types
@@ -399,7 +399,7 @@ public static class Roster
             EnsureTypesLoaded();
 
             // Use hirable leaders field at offset +0x18
-            var hirableListPtr = roster.ReadPtr(0x18);
+            var hirableListPtr = roster.ReadPtr("m_HirableLeaders", 0x18);
             if (hirableListPtr == IntPtr.Zero) return result;
 
             // Get typed list to work around GameObj.ToManaged() failing for generic types
@@ -961,7 +961,7 @@ public static class Roster
             if (leaderProxy == null) return false;
 
             // Get perks list
-            var perksPtr = leader.ReadPtr(0x48);
+            var perksPtr = leader.ReadPtr("m_Perks", 0x48);
             if (perksPtr == IntPtr.Zero) return false;
 
             var perkTemplateType = GameType.Find("Menace.Strategy.PerkTemplate")?.ManagedType;
@@ -1245,44 +1245,10 @@ public static class Roster
         });
 
         // addperk <nickname> <perk> - Add a perk to a leader
-        DevConsole.RegisterCommand("addperk", "<nickname> <perk>", "Add a perk to a leader", args =>
-        {
-            if (args.Length < 2)
-                return "Usage: addperk <nickname> <perk_name>";
-
-            var nickname = args[0];
-            var perkName = string.Join(" ", args.Skip(1));
-
-            var leader = FindByNickname(nickname);
-            if (leader.IsNull)
-                return $"Leader '{nickname}' not found";
-
-            var perk = FindPerk(perkName);
-            if (perk.IsNull)
-                return $"Perk '{perkName}' not found";
-
-            if (AddPerk(leader, perk))
-                return $"Added perk '{perkName}' to {nickname}";
-            return "Failed to add perk";
-        });
-
-        // removeperk <nickname> <perk> - Remove a perk from a leader
-        DevConsole.RegisterCommand("removeperk", "<nickname> <perk>", "Remove a perk from a leader", args =>
-        {
-            if (args.Length < 2)
-                return "Usage: removeperk <nickname> <perk_name>";
-
-            var nickname = args[0];
-            var perkName = string.Join(" ", args.Skip(1));
-
-            var leader = FindByNickname(nickname);
-            if (leader.IsNull)
-                return $"Leader '{nickname}' not found";
-
-            if (RemovePerk(leader, perkName))
-                return $"Removed perk '{perkName}' from {nickname}";
-            return "Failed to remove perk (perk not found?)";
-        });
+        // addperk / removeperk are registered once, in Perks.RegisterConsoleCommands, which
+        // dispatches into this class's FindPerk/AddPerk/RemovePerk for the global-perk and
+        // targeted-removal forms. Registering them here too meant last-writer-wins: whichever
+        // class registered second silently replaced the other's command.
 
         // setavailable <nickname> <true/false> - Set leader availability
         DevConsole.RegisterCommand("setavailable", "<nickname> <true/false>", "Set leader availability", args =>

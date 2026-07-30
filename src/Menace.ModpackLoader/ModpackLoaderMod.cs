@@ -323,6 +323,11 @@ public partial class ModpackLoaderMod : MelonMod
         SceneLoadingDiagnostics.RegisterConsoleCommands();
         SdkSafetyTesting.RegisterConsoleCommands();
         TemplatePipelineValidator.RegisterConsoleCommands();
+        GameApiCheck.RegisterConsoleCommands();
+
+        // Report any game members the SDK depends on that have moved, while the reason (a game
+        // update) is still obvious, rather than leaving it to surface as a broken command later.
+        GameApiCheck.RunAndLog();
     }
 
     private void InitializeDiagnostics()

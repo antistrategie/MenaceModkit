@@ -237,7 +237,6 @@ public class LuaScriptEngine
         "morale_changed",
         "hp_changed",
         "armor_changed",
-        "ap_changed",
 
         // Visibility events
         "discovered",
@@ -1245,7 +1244,7 @@ public class LuaScriptEngine
             {
                 if (actor.IsNull || !actor.IsAlive) continue;
                 // Check if player faction (1 or 2)
-                var factionId = actor.ReadInt(0xBC); // OFFSET_ACTOR_FACTION_ID
+                var factionId = actor.ReadInt("m_FactionID", 0xBC); // OFFSET_ACTOR_FACTION_ID
                 if (factionId == 1 || factionId == 2)
                     table[i++] = GameObjToLuaActor(actor);
             }
@@ -1269,7 +1268,7 @@ public class LuaScriptEngine
             {
                 if (actor.IsNull || !actor.IsAlive) continue;
                 // Check if enemy faction (not 0, 1, 2, 3)
-                var factionId = actor.ReadInt(0xBC);
+                var factionId = actor.ReadInt("m_FactionID", 0xBC);
                 if (factionId > 3) // EnemyLocalForces, Pirates, etc.
                     table[i++] = GameObjToLuaActor(actor);
             }

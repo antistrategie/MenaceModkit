@@ -909,8 +909,14 @@ public static class TileMap
         });
 
         // mapinfo - Get map information
-        DevConsole.RegisterCommand("mapinfo", "", "Get current map information", args =>
+        // Sole registration for 'mapinfo' (CustomMapRegistry no longer registers a duplicate):
+        // no argument shows the current tactical map, an id shows that custom map's details.
+        DevConsole.RegisterCommand("mapinfo", "[custom map id]",
+            "Current map information, or a custom map's details", args =>
         {
+            if (args.Length > 0)
+                return CustomMaps.CustomMapRegistry.DescribeMap(args[0]);
+
             var info = GetMapInfo();
             if (info == null)
                 return "No map available";
