@@ -285,7 +285,6 @@ public class LuaScriptEngine
         "faction_status_changed",
         "faction_upgrade_unlocked",
         "squaddie_killed",
-        "squaddie_added",
         "mission_ended",
         "operation_finished",
         "blackmarket_item_added",

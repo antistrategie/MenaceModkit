@@ -106,6 +106,22 @@ public static class GamePatch
         return PatchInternalWithParams(harmony, type, methodName, parameterTypes, patchMethod, null);
     }
 
+    /// <summary>
+    /// Returns a description of the first parameter Harmony cannot marshal safely, or null if
+    /// the method is patchable. The interop trampoline NREs marshalling an Il2CppSystem.Nullable
+    /// parameter when the caller passes null, which silently skips the original method.
+    /// </summary>
+    internal static string FindUnmarshallableParameter(MethodInfo method)
+    {
+        foreach (var param in method.GetParameters())
+        {
+            var type = param.ParameterType;
+            if (type.IsGenericType && type.GetGenericTypeDefinition().FullName == "Il2CppSystem.Nullable`1")
+                return $"parameter '{param.Name}' is {type.Name}, which cannot be marshalled when null";
+        }
+        return null;
+    }
+
     private static bool PatchInternalWithParams(HarmonyLib.Harmony harmony, Type targetType,
         string methodName, Type[] parameterTypes, MethodInfo prefix, MethodInfo postfix)
     {
@@ -126,6 +142,14 @@ public static class GamePatch
             {
                 ModError.ReportInternal("GamePatch",
                     $"Method '{methodName}' with specified parameters not found on {targetType.Name}");
+                return false;
+            }
+
+            var unmarshallable = FindUnmarshallableParameter(method);
+            if (unmarshallable != null)
+            {
+                ModError.ReportInternal("GamePatch",
+                    $"Refusing to patch {targetType.Name}.{methodName}: {unmarshallable}");
                 return false;
             }
 
@@ -176,6 +200,14 @@ public static class GamePatch
             {
                 ModError.ReportInternal("GamePatch",
                     $"Method '{methodName}' not found on {targetType.Name}");
+                return false;
+            }
+
+            var unmarshallable = FindUnmarshallableParameter(method);
+            if (unmarshallable != null)
+            {
+                ModError.ReportInternal("GamePatch",
+                    $"Refusing to patch {targetType.Name}.{methodName}: {unmarshallable}");
                 return false;
             }
 

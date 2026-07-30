@@ -332,6 +332,14 @@ public class PatchSet
                 return;
             }
 
+            var unmarshallable = GamePatch.FindUnmarshallableParameter(targetMethod);
+            if (unmarshallable != null)
+            {
+                ModError.Report(_modName, $"Cannot patch {targetType.Name}.{entry.MethodName}: {unmarshallable}");
+                result.RecordFailure(description);
+                return;
+            }
+
             // Apply the patch
             var prefixHm = entry.Prefix != null ? new HarmonyMethod(entry.Prefix) : null;
             var postfixHm = entry.Postfix != null ? new HarmonyMethod(entry.Postfix) : null;

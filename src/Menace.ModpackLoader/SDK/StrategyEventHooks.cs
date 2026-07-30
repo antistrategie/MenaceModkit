@@ -52,7 +52,6 @@ public static class StrategyEventHooks
 
     // Squaddie Events
     public static event Action<int> OnSquaddieKilled;                    // squaddieId
-    public static event Action<int> OnSquaddieAdded;                     // count
 
     // Operation/Mission Events
     public static event Action<IntPtr> OnMissionEnded;                   // mission
@@ -118,11 +117,12 @@ public static class StrategyEventHooks
                 patchCount += PatchMethod(harmony, _storyFactionType, "UnlockUpgrade", nameof(UnlockUpgrade_Postfix));
             }
 
-            // Squaddie patches
+            // Squaddie patches. TryAddAlive is deliberately not hooked: its Il2CppSystem.Nullable
+            // parameters NRE in the interop trampoline when the game passes null, which skips the
+            // original and empties the campaign-start roster. See BACKLOG for the safe alternative.
             if (_squaddiesType != null)
             {
                 patchCount += PatchMethod(harmony, _squaddiesType, "Kill", nameof(SquaddieKill_Postfix));
-                patchCount += PatchMethod(harmony, _squaddiesType, "TryAddAlive", nameof(SquaddieAddAlive_Postfix));
             }
 
             // Operation patches
@@ -164,6 +164,13 @@ public static class StrategyEventHooks
             if (targetMethod == null)
             {
                 SdkLogger.Warning($"[StrategyEventHooks] Method not found: {targetType.Name}.{methodName}");
+                return 0;
+            }
+
+            var unmarshallable = GamePatch.FindUnmarshallableParameter(targetMethod);
+            if (unmarshallable != null)
+            {
+                SdkLogger.Warning($"[StrategyEventHooks] Refusing to patch {targetType.Name}.{methodName}: {unmarshallable}");
                 return 0;
             }
 
@@ -418,38 +425,6 @@ public static class StrategyEventHooks
         FireLuaEvent("squaddie_killed", new Dictionary<string, object>
         {
             ["squaddie_id"] = squaddieId
-        });
-    }
-
-    // Squaddies.TryAddAlive(int _maxSquaddies, HomePlanetType _homePlanet, Nullable<Gender> _gender,
-    //                       Nullable<SkinColor> _skinColor, string _name, string _nickname)
-    // No squaddie object is handed to the caller, so the event carries the nickname it was created
-    // with plus the resulting alive count.
-    private static void SquaddieAddAlive_Postfix(object __instance, bool __result, object[] __args)
-    {
-        if (!__result) return; // the roster was full
-
-        var nickname = Arg(__args, 5) as string ?? Arg(__args, 4) as string ?? "";
-
-        // Get alive count from the Squaddies instance
-        int count = 0;
-        try
-        {
-            var countMethod = __instance.GetType().GetMethod("GetAliveCount",
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (countMethod != null)
-            {
-                count = (int)countMethod.Invoke(__instance, null);
-            }
-        }
-        catch { }
-
-        OnSquaddieAdded?.Invoke(count);
-
-        FireLuaEvent("squaddie_added", new Dictionary<string, object>
-        {
-            ["squaddie"] = nickname,
-            ["alive_count"] = count
         });
     }
 

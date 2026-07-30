@@ -1111,7 +1111,6 @@ end)
 | `leader_permadeath` | `{leader, leader_ptr}` | Leader dies permanently |
 | `leader_levelup` | `{leader, leader_ptr, perk}` | Leader gains a perk |
 | `squaddie_killed` | `{squaddie_id}` | Squaddie dies |
-| `squaddie_added` | `{squaddie, alive_count}` | Squaddie added |
 
 #### Faction Events
 

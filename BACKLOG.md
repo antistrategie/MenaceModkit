@@ -156,6 +156,16 @@ The following should be validated by running the game:
 2. **Enum Value Labels** - Extract actual enum names from IL2CPP
 3. **Field Validation** - Add validation rules (e.g., percentages 0-100)
 4. **Default Values** - Document common/default values
+5. **Reinstate `squaddie_added` event** - Dropped 2026-07-31: the Harmony hook on
+   `Squaddies.TryAddAlive` NREd in the interop trampoline (its `Il2CppSystem.Nullable<Gender>`
+   / `Il2CppSystem.Nullable<SkinColor>` parameters cannot be marshalled when the game passes
+   null), which skipped the original and emptied the campaign-start roster. `GamePatch.
+   FindUnmarshallableParameter` now refuses such methods at patch time. Safe reimplementation
+   route if ever wanted: the game exposes `Squaddies.OnAliveSquaddiesChanged` (`Action<int>`);
+   patch the zero-arg `Squaddies` ctor or `Init()` postfix, subscribe via
+   `DelegateSupport.ConvertDelegate`, diff the alive count to distinguish add from kill, and
+   read the nickname from the last entry of `GetAllAlive()`. Unverified whether the game
+   actually invokes that event - confirm in Ghidra before building on it.
 
 ---
 

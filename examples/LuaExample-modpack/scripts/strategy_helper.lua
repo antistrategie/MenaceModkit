@@ -149,15 +149,6 @@ on("squaddie_killed", function(data)
     -- Track squaddie losses for statistics
 end)
 
-on("squaddie_added", function(data)
-    if not data then return end
-
-    local id = data.id or "unknown"
-    log("[StrategyHelper] New squaddie: " .. tostring(id))
-
-    -- Welcome new recruits
-end)
-
 -- =============================================================================
 -- MISSION EVENTS
 -- =============================================================================

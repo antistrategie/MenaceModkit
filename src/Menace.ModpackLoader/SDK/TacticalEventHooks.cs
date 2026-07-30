@@ -185,6 +185,13 @@ public static class TacticalEventHooks
                 return 0;
             }
 
+            var unmarshallable = GamePatch.FindUnmarshallableParameter(targetMethod);
+            if (unmarshallable != null)
+            {
+                SdkLogger.Warning($"[TacticalEventHooks] Refusing to patch {methodName}: {unmarshallable}");
+                return 0;
+            }
+
             var patchMethod = typeof(TacticalEventHooks).GetMethod(patchMethodName,
                 BindingFlags.Static | BindingFlags.NonPublic);
 
@@ -214,6 +221,13 @@ public static class TacticalEventHooks
             if (targetMethod == null)
             {
                 SdkLogger.Warning($"[TacticalEventHooks] Method not found: {methodName}");
+                return 0;
+            }
+
+            var unmarshallable = GamePatch.FindUnmarshallableParameter(targetMethod);
+            if (unmarshallable != null)
+            {
+                SdkLogger.Warning($"[TacticalEventHooks] Refusing to patch {methodName}: {unmarshallable}");
                 return 0;
             }
 

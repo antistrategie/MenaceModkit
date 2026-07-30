@@ -78,7 +78,6 @@ public static class GameApiCheck
         new() { TypeName = "Menace.Tactical.TacticalManager", Kind = MemberKind.Method, MemberName = "InvokeOnDeath", MinParameters = 3, UsedBy = "actor_killed event" },
         new() { TypeName = "Menace.Tactical.TacticalManager", Kind = MemberKind.Method, MemberName = "SetActiveActor", MinParameters = 2, UsedBy = "turn_start event" },
         new() { TypeName = "Menace.Strategy.Roster", Kind = MemberKind.Method, MemberName = "HireLeader", MinParameters = 1, UsedBy = "leader_hired event" },
-        new() { TypeName = "Menace.Strategy.Squaddies", Kind = MemberKind.Method, MemberName = "TryAddAlive", MinParameters = 6, UsedBy = "squaddie_added event" },
         new() { TypeName = "Menace.Strategy.BlackMarket", Kind = MemberKind.Method, MemberName = "Restock", MinParameters = 2, UsedBy = "blackmarket_restocked event" },
         new() { TypeName = "Menace.Tactical.Actor", Kind = MemberKind.Type, UsedBy = "tactical event hooks, Lua actor API" },
         new() { TypeName = "Menace.Tactical.Entity", Kind = MemberKind.Field, MemberName = "m_FactionID", UsedBy = "faction lookups in event hooks and Lua" },

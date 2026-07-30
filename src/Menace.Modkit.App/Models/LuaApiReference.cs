@@ -1523,14 +1523,6 @@ public static class LuaApiReference
                     InsertText = "on(\"squaddie_killed\", function(data)\n    log(\"Squaddie lost\")\nend)",
                     ItemType = LuaApiItemType.Event
                 },
-                new()
-                {
-                    Name = "squaddie_added",
-                    Description = "Fired when a squaddie is recruited. Data: { id }",
-                    Signature = "on(\"squaddie_added\", function(data) ... end)",
-                    InsertText = "on(\"squaddie_added\", function(data)\n    log(\"New squaddie recruited\")\nend)",
-                    ItemType = LuaApiItemType.Event
-                },
                 // Economy
                 new()
                 {
