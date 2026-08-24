@@ -227,18 +227,19 @@ public partial class ModpackLoaderMod
         return false;
     }
 
-    // Memory layout offsets for BaseLocalizedString (from reverse engineering)
-    private const int LOC_CATEGORY_OFFSET = 0x10;           // int LocaCategory
-    private const int LOC_KEY_PART1_OFFSET = 0x18;          // string m_KeyPart1
-    private const int LOC_KEY_PART2_OFFSET = 0x20;          // string m_KeyPart2
-    private const int LOC_CATEGORY_NAME_OFFSET = 0x28;      // string m_CategoryName
-    private const int LOC_IDENTIFIER_OFFSET = 0x30;         // string m_Identifier
-    private const int LOC_DEFAULT_TRANSLATION_OFFSET = 0x38; // string m_DefaultTranslation
-    private const int LOC_HAS_PLACEHOLDERS_OFFSET = 0x40;   // bool hasPlaceholders
+    // BaseLocalizedString field names, resolved at runtime per class. Newer game builds
+    // renamed several fields, so each logical field carries the known name candidates in
+    // preference order. Hard-coded offsets are never used: a layout change between builds
+    // silently corrupts objects (wrong-slot pointer writes surfaced as
+    // ArrayTypeMismatchException in BaseItemTemplate.GetLocalizedStrings and native
+    // crashes during BlackMarket.AddStacks).
+    private static readonly string[] LocDefaultTranslationNames = { "m_DefaultTranslation" };
+    private static readonly string[] LocAllowPlaceholdersNames = { "m_AllowPlaceholders", "hasPlaceholders" };
 
     // Cache for LocalizedLine/LocalizedMultiLine class pointers
     private static IntPtr _localizedLineClass = IntPtr.Zero;
     private static IntPtr _localizedMultiLineClass = IntPtr.Zero;
+    private static IntPtr _baseLocalizedStringClass = IntPtr.Zero;
 
     /// <summary>
     /// Get the IL2CPP class pointer for LocalizedLine.
@@ -265,60 +266,76 @@ public partial class ModpackLoaderMod
     }
 
     /// <summary>
-    /// Create a new LocalizedLine or LocalizedMultiLine object with the given text.
-    /// Creates a FRESH instance to avoid corrupting shared localization objects.
-    /// If existingLocPtr is null/zero, creates a LocalizedLine by default.
+    /// Get the IL2CPP class pointer for BaseLocalizedString (the abstract base).
     /// </summary>
-    private IntPtr CreateLocalizedObject(IntPtr existingLocPtr, string value)
+    private static IntPtr GetBaseLocalizedStringClass()
+    {
+        if (_baseLocalizedStringClass != IntPtr.Zero)
+            return _baseLocalizedStringClass;
+
+        _baseLocalizedStringClass = IL2CPP.GetIl2CppClass("Assembly-CSharp.dll", "Menace.Tools", "BaseLocalizedString");
+        return _baseLocalizedStringClass;
+    }
+
+    /// <summary>
+    /// Resolve a field offset on a class by trying candidate names in order, walking
+    /// the class hierarchy. Returns 0 when no candidate resolves.
+    /// </summary>
+    private static uint ResolveLocFieldOffset(IntPtr klass, string[] nameCandidates)
+    {
+        foreach (var name in nameCandidates)
+        {
+            var field = FindField(klass, name);
+            if (field != IntPtr.Zero)
+            {
+                var offset = IL2CPP.il2cpp_field_get_offset(field);
+                if (offset != 0)
+                    return offset;
+            }
+        }
+        return 0;
+    }
+
+    /// <summary>
+    /// Create a new localization object with the given text.
+    /// Creates a FRESH instance to avoid corrupting shared localization objects.
+    ///
+    /// The class is chosen from the target FIELD's declared type when the caller can
+    /// supply it (a Description field must hold a LocalizedMultiLine, not a
+    /// LocalizedLine — a wrong-class object in the field later fails the game's typed
+    /// array stores with ArrayTypeMismatchException). Falls back to the existing
+    /// object's class, then LocalizedLine.
+    ///
+    /// A freshly allocated IL2CPP object is zeroed, so the key/category fields are
+    /// already cleared — localization lookup fails and the game falls back to
+    /// m_DefaultTranslation, which is the only field written. Field offsets are
+    /// resolved by name at runtime; this codebase must never hard-code offsets for
+    /// game types, because layout drift between builds turns every write into silent
+    /// memory corruption.
+    /// </summary>
+    private IntPtr CreateLocalizedObject(IntPtr existingLocPtr, string value, IntPtr fieldClass = default)
     {
         try
         {
-            IntPtr newClass;
-            byte hasPlaceholders = 0;
-
-            if (existingLocPtr != IntPtr.Zero)
+            // Choose the concrete class: the field's declared type when known and
+            // concrete, else the existing object's class, else LocalizedLine.
+            var newClass = fieldClass;
+            if (newClass == IntPtr.Zero || newClass == GetBaseLocalizedStringClass())
             {
-                // Get the class of the existing object to create the same type
-                var existingClass = IL2CPP.il2cpp_object_get_class(existingLocPtr);
-                if (existingClass == IntPtr.Zero)
-                {
-                    SdkLogger.Warning("    CreateLocalizedObject: could not get class of existing object, defaulting to LocalizedLine");
+                if (existingLocPtr != IntPtr.Zero)
+                    newClass = IL2CPP.il2cpp_object_get_class(existingLocPtr);
+                if (newClass == IntPtr.Zero)
                     newClass = GetLocalizedLineClass();
-                }
-                else
-                {
-                    // Get the class name to determine if it's LocalizedLine or LocalizedMultiLine
-                    var classNamePtr = IL2CPP.il2cpp_class_get_name(existingClass);
-                    var className = classNamePtr != IntPtr.Zero ? Marshal.PtrToStringAnsi(classNamePtr) : "";
-
-                    // Get the appropriate class pointer
-                    if (className == "LocalizedMultiLine")
-                    {
-                        newClass = GetLocalizedMultiLineClass();
-                    }
-                    else
-                    {
-                        // Default to LocalizedLine for LocalizedLine or BaseLocalizedString
-                        newClass = GetLocalizedLineClass();
-                    }
-
-                    // Copy hasPlaceholders from existing object
-                    hasPlaceholders = Marshal.ReadByte(existingLocPtr + LOC_HAS_PLACEHOLDERS_OFFSET);
-                }
-            }
-            else
-            {
-                // No existing object - default to LocalizedLine (most common for names/titles)
-                newClass = GetLocalizedLineClass();
             }
 
             if (newClass == IntPtr.Zero)
             {
-                SdkLogger.Warning("    CreateLocalizedObject: could not find LocalizedLine class");
+                SdkLogger.Warning("    CreateLocalizedObject: could not resolve a localization class");
                 return IntPtr.Zero;
             }
 
-            // Allocate a new instance
+            // Allocate a new instance (zero-initialised: keys and category are already
+            // cleared, so localization lookup fails and m_DefaultTranslation is used).
             var newObj = IL2CPP.il2cpp_object_new(newClass);
             if (newObj == IntPtr.Zero)
             {
@@ -326,36 +343,36 @@ public partial class ModpackLoaderMod
                 return IntPtr.Zero;
             }
 
-            // IMPORTANT: Clear the key fields so localization lookup FAILS
-            // This forces the game to use m_DefaultTranslation as the actual text
-            // If we copy the original key, the game's localization system will
-            // look it up and OVERWRITE m_DefaultTranslation with cached text
+            // Set m_DefaultTranslation to our new value
+            var translationOffset = ResolveLocFieldOffset(newClass, LocDefaultTranslationNames);
+            if (translationOffset == 0)
+            {
+                SdkLogger.Warning("    CreateLocalizedObject: m_DefaultTranslation not found on localization class; game layout changed?");
+                return IntPtr.Zero;
+            }
 
-            // Clear LocaCategory (int at +0x10) - set to 0 (None/Invalid)
-            Marshal.WriteInt32(newObj + LOC_CATEGORY_OFFSET, 0);
-
-            // Clear m_KeyPart1 (string at +0x18) - set to null
-            Marshal.WriteIntPtr(newObj + LOC_KEY_PART1_OFFSET, IntPtr.Zero);
-
-            // Clear m_KeyPart2 (string at +0x20) - set to null
-            Marshal.WriteIntPtr(newObj + LOC_KEY_PART2_OFFSET, IntPtr.Zero);
-
-            // Clear m_CategoryName (string at +0x28) - set to null
-            Marshal.WriteIntPtr(newObj + LOC_CATEGORY_NAME_OFFSET, IntPtr.Zero);
-
-            // Clear m_Identifier (string at +0x30) - set to null
-            Marshal.WriteIntPtr(newObj + LOC_IDENTIFIER_OFFSET, IntPtr.Zero);
-
-            // Set m_DefaultTranslation to our new value (string at +0x38)
             IntPtr il2cppStr = IntPtr.Zero;
             if (!string.IsNullOrEmpty(value))
             {
                 il2cppStr = IL2CPP.ManagedStringToIl2Cpp(value);
             }
-            Marshal.WriteIntPtr(newObj + LOC_DEFAULT_TRANSLATION_OFFSET, il2cppStr);
+            Marshal.WriteIntPtr(newObj + (int)translationOffset, il2cppStr);
 
-            // Set hasPlaceholders (bool at +0x40)
-            Marshal.WriteByte(newObj + LOC_HAS_PLACEHOLDERS_OFFSET, hasPlaceholders);
+            // Copy the allow-placeholders flag from the existing object when both
+            // sides expose it; otherwise leave the zeroed default.
+            if (existingLocPtr != IntPtr.Zero)
+            {
+                var existingClass = IL2CPP.il2cpp_object_get_class(existingLocPtr);
+                var srcOffset = existingClass == IntPtr.Zero
+                    ? 0
+                    : ResolveLocFieldOffset(existingClass, LocAllowPlaceholdersNames);
+                var dstOffset = ResolveLocFieldOffset(newClass, LocAllowPlaceholdersNames);
+                if (srcOffset != 0 && dstOffset != 0)
+                {
+                    Marshal.WriteByte(newObj + (int)dstOffset,
+                        Marshal.ReadByte(existingLocPtr + (int)srcOffset));
+                }
+            }
 
             return newObj;
         }
@@ -406,10 +423,20 @@ public partial class ModpackLoaderMod
                 existingLocPtr = IntPtr.Zero;
             }
 
+            // Resolve the field's declared class so the new object gets the type the
+            // field is contracted to hold (LocalizedLine vs LocalizedMultiLine), even
+            // when the existing value is null (e.g. on cloned templates).
+            var fieldClass = IntPtr.Zero;
+            var fieldPtr = FindField(klassPtr, fieldName);
+            if (fieldPtr != IntPtr.Zero)
+            {
+                var fieldType = IL2CPP.il2cpp_field_get_type(fieldPtr);
+                if (fieldType != IntPtr.Zero)
+                    fieldClass = IL2CPP.il2cpp_class_from_type(fieldType);
+            }
+
             // Create a NEW localization object with our text
-            // If existingLocPtr is null (e.g., on cloned templates), CreateLocalizedObject
-            // will create a fresh LocalizedLine object
-            var newLocPtr = CreateLocalizedObject(existingLocPtr, value);
+            var newLocPtr = CreateLocalizedObject(existingLocPtr, value, fieldClass);
             if (newLocPtr == IntPtr.Zero)
             {
                 SdkLogger.Warning($"    {fieldName}: failed to create new localization object");
@@ -458,9 +485,19 @@ public partial class ModpackLoaderMod
                 }
             }
 
-            // Create a NEW localization object with our text
-            // CreateLocalizedObject handles null existingPtr by creating a fresh LocalizedLine
-            var newLocPtr = CreateLocalizedObject(existingPtr, value);
+            // Create a NEW localization object of the declared type; the abstract base
+            // and unresolvable types fall back inside CreateLocalizedObject.
+            var declaredClass = IntPtr.Zero;
+            try
+            {
+                declaredClass = Il2CppClassPointerStore.GetNativeClassPointer(locType);
+            }
+            catch
+            {
+                // Not an IL2CPP type; CreateLocalizedObject falls back to the existing
+                // object's class, then LocalizedLine.
+            }
+            var newLocPtr = CreateLocalizedObject(existingPtr, value, declaredClass);
             if (newLocPtr == IntPtr.Zero)
             {
                 SdkLogger.Warning($"    {fieldName}: failed to create new localization object");
