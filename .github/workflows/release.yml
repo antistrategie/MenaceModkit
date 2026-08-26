@@ -182,8 +182,10 @@ jobs:
             ### 📦 Menace Mod Manager — install & play with mods
             A lean, standalone manager (r2modman / Vortex style) for mods you've downloaded. It installs, enables/disables and uninstalls every kind of MENACE mod — modpacks, raw MelonLoader mods, Jiangyu mods and custom-leader packs — from a single drag-and-drop window, and sets up the loaders they need (MelonLoader, Modpack Loader, Jiangyu). No editors, nothing to configure. **If you just want to play with mods, this is the one.**
 
-            ### 🛠 Menace Modkit — make mods
-            The full authoring toolkit for *building* MENACE mods: visual editors for templates, stats, assets, clones and custom leaders; a C# editor with live compilation; asset extraction/import; load-order and conflict tools; and one-click deploy to test in-game. Bundles the runtime loaders and an optional MCP server for AI-assisted authoring. **Get this only if you want to create mods.**
+            ### 🛠 Menace Modkit — make mods (deprecated)
+            > ⚠️ **The Modkit is deprecated and no longer being worked on.** It still ships with each release, but it gets no fixes or testing, so expect issues.
+
+            The full authoring toolkit for *building* MENACE mods: visual editors for templates, stats, assets, clones and custom leaders; a C# editor with live compilation; asset extraction/import; load-order and conflict tools; and one-click deploy to test in-game. Bundles the runtime loaders and an optional MCP server for AI-assisted authoring.
 
             Both are self-contained — no .NET install needed. Mods are loaded at runtime from the game's `Mods/` folder; neither app patches the game's own files.
 
@@ -192,7 +194,7 @@ jobs:
             | App | Windows | Linux |
             |-----|---------|-------|
             | **Mod Manager** — play with mods | `menace-mod-manager-win-x64.zip` | `menace-mod-manager-linux-x64.tar.gz` |
-            | **Modkit** — make mods | `menace-modkit-win-x64.zip` | `menace-modkit-linux-x64.tar.gz` |
+            | **Modkit** — make mods (deprecated) | `menace-modkit-win-x64.zip` | `menace-modkit-linux-x64.tar.gz` |
 
             Extract and run. Each app downloads any extra components it needs on first launch.
 
