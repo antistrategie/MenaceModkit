@@ -767,12 +767,10 @@ public class ModLoaderInstaller
             // On Linux, launch through Steam for Proton support
             if (OperatingSystem.IsLinux())
             {
-                // Menace Steam App ID
-                const string appId = "2432860";
                 startInfo = new ProcessStartInfo
                 {
                     FileName = "steam",
-                    Arguments = $"steam://rungameid/{appId}",
+                    Arguments = $"steam://rungameid/{GameLauncher.SteamAppId}",
                     UseShellExecute = true
                 };
                 progressCallback?.Invoke("Launching via Steam (Proton)...");

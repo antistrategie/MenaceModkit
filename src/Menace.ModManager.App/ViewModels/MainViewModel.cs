@@ -87,6 +87,14 @@ public sealed class MainViewModel : ReactiveObject
         private set => this.RaiseAndSetIfChanged(ref _status, value);
     }
 
+    private string _launchGameLabel = "▶ Launch game (Steam)";
+    /// <summary>Launch-button label — says up front how the game will be started.</summary>
+    public string LaunchGameLabel
+    {
+        get => _launchGameLabel;
+        private set => this.RaiseAndSetIfChanged(ref _launchGameLabel, value);
+    }
+
     private ManagedMod? _selected;
     public ManagedMod? Selected
     {
@@ -284,6 +292,33 @@ public sealed class MainViewModel : ReactiveObject
         });
     }
 
+    /// <summary>
+    /// Launch the game. Hand-off only — Steam (or the OS) takes it from there, so no
+    /// busy overlay; the status line just confirms the click did something.
+    /// </summary>
+    public void LaunchGame()
+    {
+        var gamePath = ModkitConfig.Current.GameInstallPath;
+        if (string.IsNullOrEmpty(gamePath))
+        {
+            ErrorMessage = "Game not located — click Locate game… (or set MENACE_GAME_PATH).";
+            return;
+        }
+
+        ErrorMessage = null;
+        try
+        {
+            GameLauncher.Launch(gamePath);
+            Status = GameLauncher.LaunchesViaSteam(gamePath)
+                ? "Launching MENACE via Steam…"
+                : "Launching MENACE…";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Couldn't launch the game: {ex.Message}";
+        }
+    }
+
     /// <summary>Apply a user-chosen game folder (validated + persisted), then rescan.</summary>
     public void SetGamePath(string path)
     {
@@ -422,6 +457,12 @@ public sealed class MainViewModel : ReactiveObject
     private void RefreshLoaderStatuses(
         string? gamePath, bool melonInstalled, string? melonVersion, string? bundledModpackLoaderVersion)
     {
+        // "(Steam)" also while the game is unlocated: effectively every install is a
+        // Steam one, and the click then shows the locate-game error anyway.
+        LaunchGameLabel = string.IsNullOrEmpty(gamePath) || GameLauncher.LaunchesViaSteam(gamePath)
+            ? "▶ Launch game (Steam)"
+            : "▶ Launch game";
+
         if (string.IsNullOrEmpty(gamePath))
         {
             MelonLoaderStatus = ModpackLoaderStatus = JiangyuLoaderStatus = "game not located";

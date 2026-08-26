@@ -213,6 +213,8 @@ public partial class MainWindow : Window
 
     private void OnRefreshClick(object? sender, RoutedEventArgs e) => Vm?.Refresh();
 
+    private void OnLaunchGameClick(object? sender, RoutedEventArgs e) => Vm?.LaunchGame();
+
     private async void OnLocateGameClick(object? sender, RoutedEventArgs e)
     {
         await GuardedAsync(async () =>
