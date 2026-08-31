@@ -59,6 +59,16 @@ public sealed class ManagedMod
     /// <summary>Load order for display — empty for kinds without ordering semantics.</summary>
     public string LoadOrderDisplay => LoadOrder?.ToString() ?? string.Empty;
 
+    /// <summary>
+    /// Whether this mod's load order can be changed. Only modpacks carry a manifest
+    /// <c>loadOrder</c>. Raw MelonLoader and Jiangyu mods are sequenced by MelonLoader
+    /// itself — a topological sort over the dependency attributes compiled into the
+    /// assembly, then a stable sort by <c>[MelonPriority]</c> — with ties falling back to
+    /// raw <c>Directory.GetFiles</c> discovery order. All of that is either baked into the
+    /// assembly or filesystem-dependent, so no manager can reorder them from outside.
+    /// </summary>
+    public bool SupportsLoadOrder => Kind == ModKind.Modpack;
+
     /// <summary>Version shown in the UI — includes the Jiangyu target for Jiangyu mods.</summary>
     public string VersionDisplay =>
         string.IsNullOrEmpty(CompiledForJiangyu)

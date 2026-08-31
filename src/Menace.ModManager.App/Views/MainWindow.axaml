@@ -100,6 +100,13 @@
         <StackPanel Orientation="Horizontal" Spacing="6">
           <Button Content="Install mod…" Click="OnInstallClick" />
           <Button Content="Uninstall selected" Click="OnUninstallClick" IsEnabled="{Binding HasSelection}" />
+          <Rectangle Width="1" Margin="4,2" Fill="#33808080" />
+          <!-- Reorder acts on the selected modpack. Enabled only for modpacks: raw
+               MelonLoader/Jiangyu mods are ordered by their compiled [MelonPriority]. -->
+          <Button Content="▲ Move up" Click="OnMoveUpClick" IsEnabled="{Binding CanMoveUp}"
+                  ToolTip.Tip="Load this modpack earlier. Earlier packs are overridden by later ones." />
+          <Button Content="▼ Move down" Click="OnMoveDownClick" IsEnabled="{Binding CanMoveDown}"
+                  ToolTip.Tip="Load this modpack later. The last pack to touch a field wins the conflict." />
           <TextBlock Text="…or drop a mod archive here, or copy it and press Ctrl+V"
                      VerticalAlignment="Center" Opacity="0.5" Margin="8,0,0,0" />
         </StackPanel>
@@ -113,7 +120,8 @@
       <Grid DockPanel.Dock="Top" ColumnDefinitions="60,*,70,150,130" Margin="4,0,4,4">
         <TextBlock Grid.Column="0" Text="On" Opacity="0.6" />
         <TextBlock Grid.Column="1" Text="Name" Opacity="0.6" />
-        <TextBlock Grid.Column="2" Text="Order" Opacity="0.6" />
+        <TextBlock Grid.Column="2" Text="Order" Opacity="0.6"
+                   ToolTip.Tip="Modpack load order — lower loads first, higher applies last and wins field conflicts. Blank for mods ordered by [MelonPriority] instead." />
         <TextBlock Grid.Column="3" Text="Version" Opacity="0.6" />
         <TextBlock Grid.Column="4" Text="Author" Opacity="0.6" />
       </Grid>

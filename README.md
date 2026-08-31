@@ -31,7 +31,9 @@
 ## What's Included
 
 
-**Mod Manager** — A lean, standalone app for *installing and playing with* mods (r2modman / Vortex style). Install, enable/disable and uninstall every kind of MENACE mod — modpacks, raw MelonLoader mods, Jiangyu mods and custom-leader packs — from one drag-and-drop window, and it sets up the loaders they need (MelonLoader, Modpack Loader, Jiangyu). No editors, nothing to configure. If you just want to play with mods, this is the one.
+**Mod Manager** — A lean, standalone app for *installing and playing with* mods (r2modman / Vortex style). Install, enable/disable, reorder and uninstall every kind of MENACE mod — modpacks, raw MelonLoader mods, Jiangyu mods and custom-leader packs — from one drag-and-drop window, and it sets up the loaders they need (MelonLoader, Modpack Loader, Jiangyu). No editors, nothing to configure. If you just want to play with mods, this is the one.
+
+Select a modpack and use **Move up / Move down** to set its load order: packs load lowest-first, and the last one to write a field wins that conflict. The order is stored as `loadOrder` in each pack's `modpack.json`, so it is also editable by hand. Raw MelonLoader and Jiangyu mods show a blank Order — they are sequenced by the `[MelonPriority]` compiled into the mod, which no manager can change.
 
 <p align="center">
   <img src="img/mod-manager.png" alt="Menace Mod Manager" width="600"/>

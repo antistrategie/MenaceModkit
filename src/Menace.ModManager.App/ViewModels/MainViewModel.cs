@@ -23,6 +23,7 @@ public sealed class MainViewModel : ReactiveObject
     private readonly ModEnableService _enableService = new();
     private readonly ModInstallService _installService = new();
     private readonly ModDeployService _deployService = new();
+    private readonly LoadOrderService _loadOrder = new();
     private readonly JiangyuLoaderInstaller _jiangyu = new();
     private readonly MelonLoaderInstaller _melonLoader = new();
 
@@ -103,10 +104,39 @@ public sealed class MainViewModel : ReactiveObject
         {
             this.RaiseAndSetIfChanged(ref _selected, value);
             this.RaisePropertyChanged(nameof(HasSelection));
+            RaiseMoveAvailability();
         }
     }
 
     public bool HasSelection => Selected is not null;
+
+    /// <summary>
+    /// The modpacks in their current display order — the working set for a reorder.
+    /// Disabled ones are included so an order survives a disable/enable round trip.
+    /// </summary>
+    private List<ManagedMod> OrderedModpacks =>
+        Mods.Where(m => m.SupportsLoadOrder).ToList();
+
+    /// <summary>Index of the selection within <see cref="OrderedModpacks"/>, or -1.</summary>
+    private int SelectedModpackIndex =>
+        Selected is { SupportsLoadOrder: true } sel ? OrderedModpacks.FindIndex(m => m.Id == sel.Id) : -1;
+
+    public bool CanMoveUp => SelectedModpackIndex > 0;
+
+    public bool CanMoveDown
+    {
+        get
+        {
+            var i = SelectedModpackIndex;
+            return i >= 0 && i < OrderedModpacks.Count - 1;
+        }
+    }
+
+    private void RaiseMoveAvailability()
+    {
+        this.RaisePropertyChanged(nameof(CanMoveUp));
+        this.RaisePropertyChanged(nameof(CanMoveDown));
+    }
 
     private string _melonLoaderStatus = string.Empty;
     public string MelonLoaderStatus
@@ -340,6 +370,11 @@ public sealed class MainViewModel : ReactiveObject
     private bool _refreshRunning;
     private bool _refreshPending;
 
+    // Id to reselect once the next rescan has repopulated Rows. The scan builds fresh
+    // ManagedMod instances every time, so the old object reference is never in the new
+    // list — without this, a reorder would drop the selection after every single click.
+    private string? _reselectId;
+
     /// <summary>
     /// Rescan <c>Mods/</c> and update the list. The scan (file I/O + DLL metadata reads)
     /// runs off the UI thread — inline it would visibly freeze the window on a large
@@ -418,6 +453,15 @@ public sealed class MainViewModel : ReactiveObject
                 foreach (var mod in group)
                     Rows.Add(mod);
             }
+
+            if (_reselectId is { } reselect)
+            {
+                _reselectId = null;
+                SelectedRow = Rows.OfType<ManagedMod>()
+                    .FirstOrDefault(m => string.Equals(m.Id, reselect, StringComparison.OrdinalIgnoreCase));
+            }
+
+            RaiseMoveAvailability();
 
             var path = _catalog.ModsPath;
             Status = path == null
@@ -570,6 +614,49 @@ public sealed class MainViewModel : ReactiveObject
             // list must be re-read to show the on-disk truth again.
         }
 
+        Refresh();
+    }
+
+    /// <summary>
+    /// Move the selected modpack one place earlier (<paramref name="delta"/> -1) or later
+    /// (+1) in load order, then renumber every modpack to match and rescan.
+    ///
+    /// Later = applied later = wins field conflicts, which is why "down" is the direction
+    /// that makes a pack override its neighbours.
+    /// </summary>
+    public void MoveSelected(int delta)
+    {
+        var modpacks = OrderedModpacks;
+        var index = SelectedModpackIndex;
+        var target = index + delta;
+        if (index < 0 || target < 0 || target >= modpacks.Count)
+            return;
+
+        var moved = modpacks[index];
+        modpacks.RemoveAt(index);
+        modpacks.Insert(target, moved);
+
+        ErrorMessage = null;
+        try
+        {
+            var written = _loadOrder.ApplyOrdering(modpacks);
+            Status = written.Count == 0
+                ? $"{moved.DisplayName} is already in that position."
+                : $"Load order updated — {moved.DisplayName} now #{target + 1} of {modpacks.Count}.";
+        }
+        catch (AggregateLoadOrderException ex)
+        {
+            // Partial application: whatever landed stays, and the rescan below shows the
+            // real on-disk order rather than the one we asked for.
+            ErrorMessage = $"Couldn't reorder every modpack:\n{ex.Message}";
+        }
+        catch (Exception ex)
+        {
+            ErrorMessage = $"Couldn't change load order: {ex.Message}";
+        }
+
+        // Keep the moved pack selected so the user can click again without re-picking it.
+        _reselectId = moved.Id;
         Refresh();
     }
 

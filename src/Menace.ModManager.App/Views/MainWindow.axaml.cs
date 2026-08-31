@@ -241,6 +241,10 @@ public partial class MainWindow : Window
             Vm?.Toggle(mod);
     }
 
+    private void OnMoveUpClick(object? sender, RoutedEventArgs e) => Vm?.MoveSelected(-1);
+
+    private void OnMoveDownClick(object? sender, RoutedEventArgs e) => Vm?.MoveSelected(+1);
+
     private async void OnInstallClick(object? sender, RoutedEventArgs e)
     {
         await GuardedAsync(async () =>
