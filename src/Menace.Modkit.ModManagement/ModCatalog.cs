@@ -218,6 +218,7 @@ public sealed class ModCatalog
             DisplayName = !string.IsNullOrEmpty(info?.Name) ? info!.Name! : folderName,
             Version = info?.Version ?? string.Empty,
             Author = info?.Author ?? string.Empty,
+            LoadOrder = info?.EffectivePriority ?? 0,
             IsEnabled = enabled,
             Location = dir,
         };
@@ -278,6 +279,10 @@ public sealed class ModCatalog
             Version = version,
             Author = author,
             CompiledForJiangyu = compiledForJiangyu,
+            LoadOrder = JiangyuFolderOrder.TryParse(new DirectoryInfo(dir).Name, out var order)
+                ? order
+                : null,
+            OrderedByFolderName = true,
             IsEnabled = enabled,
             Location = dir,
         };
@@ -332,6 +337,7 @@ public sealed class ModCatalog
                 DisplayName = displayName,
                 Version = info?.Version ?? string.Empty,
                 Author = info?.Author ?? string.Empty,
+                LoadOrder = info?.EffectivePriority ?? 0,
                 // In-place ".dll.disabled" is disabled even under Mods/; DisabledMods/ is always disabled.
                 IsEnabled = enabled && isDll,
                 Location = file,

@@ -56,6 +56,7 @@ public static class MelonModInspector
                 .ToArray();
 
             var (name, version, author, hasMelonInfo) = ReadMelonInfo(reader);
+            var priority = ReadMelonPriority(reader);
 
             var referencesMelon = referenced.Any(
                 r => r.Equals("MelonLoader", StringComparison.OrdinalIgnoreCase));
@@ -69,6 +70,7 @@ public static class MelonModInspector
                 Version = version,
                 Author = author,
                 HasMelonInfo = hasMelonInfo,
+                Priority = priority,
                 ReferencesMelonLoader = referencesMelon,
                 IsJiangyu = isJiangyu,
                 ReferencedAssemblies = referenced,
@@ -111,6 +113,36 @@ public static class MelonModInspector
         }
 
         return (null, null, null, false);
+    }
+
+    /// <summary>
+    /// The assembly's <c>[MelonPriority]</c> value, or null when it declares none.
+    /// </summary>
+    private static int? ReadMelonPriority(MetadataReader reader)
+    {
+        foreach (var handle in reader.GetAssemblyDefinition().GetCustomAttributes())
+        {
+            var attr = reader.GetCustomAttribute(handle);
+            var typeName = GetAttributeTypeName(reader, attr);
+            if (typeName == null || !typeName.EndsWith("MelonPriorityAttribute", StringComparison.Ordinal))
+                continue;
+
+            CustomAttributeValue<string> value;
+            try
+            {
+                value = attr.DecodeValue(StringAttributeTypeProvider.Instance);
+            }
+            catch
+            {
+                continue;
+            }
+
+            // MelonPriority(int priority = 0)
+            if (value.FixedArguments.Length > 0 && value.FixedArguments[0].Value is int priority)
+                return priority;
+        }
+
+        return null;
     }
 
     private static string? GetAttributeTypeName(MetadataReader reader, CustomAttribute attr)

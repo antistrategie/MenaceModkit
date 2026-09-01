@@ -21,6 +21,16 @@ public sealed record MelonModInfo
     /// <summary>Whether an assembly-level <c>[MelonInfo]</c>/<c>[MelonModInfo]</c> attribute was found.</summary>
     public bool HasMelonInfo { get; init; }
 
+    /// <summary>
+    /// The <c>[MelonPriority]</c> value, or null when the assembly declares none. MelonLoader
+    /// registers melons in ascending priority order and treats an absent attribute as 0, so a
+    /// null and a declared 0 sequence identically.
+    /// </summary>
+    public int? Priority { get; init; }
+
+    /// <summary>The priority MelonLoader will sort on: the declared value, else 0.</summary>
+    public int EffectivePriority => Priority ?? 0;
+
     /// <summary>Whether the assembly references MelonLoader (a strong signal it is a MelonMod).</summary>
     public bool ReferencesMelonLoader { get; init; }
 

@@ -235,6 +235,12 @@ public partial class MainWindow : Window
 
     private void OnDismissWarningClick(object? sender, RoutedEventArgs e) => Vm?.DismissWarning();
 
+    private async void OnRemoveStaleDuplicatesClick(object? sender, RoutedEventArgs e)
+    {
+        if (Vm is { } vm)
+            await vm.RemoveStaleDuplicatesAsync();
+    }
+
     private void OnToggleClick(object? sender, RoutedEventArgs e)
     {
         if (sender is CheckBox { DataContext: ManagedMod mod })

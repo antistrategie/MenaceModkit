@@ -51,23 +51,39 @@ public sealed class ManagedMod
     public string? CompiledForJiangyu { get; init; }
 
     /// <summary>
-    /// For modpacks: the mod-owned <c>loadOrder</c> from its manifest (patch application
-    /// order at runtime, last-wins). Null for kinds without ordering semantics.
+    /// The number that sequences this mod within its own loader. For modpacks: the mod-owned
+    /// <c>loadOrder</c> from its manifest (patch application order at runtime, last-wins).
+    /// For a Jiangyu mod folder: the numeric prefix on the folder name, which is what the
+    /// loader's ordinal walk of <c>Mods/</c> sorts on. For a MelonLoader DLL: its
+    /// <c>[MelonPriority]</c>, read-only and 0 when the assembly declares none. Null for a
+    /// modpack or Jiangyu folder carrying no order at all.
     /// </summary>
     public int? LoadOrder { get; init; }
+
+    /// <summary>
+    /// Whether this mod's order lives in its folder name — true only for a Jiangyu mod
+    /// folder (one carrying <c>jiangyu.json</c>). A Jiangyu-SDK mod shipped as a loose DLL
+    /// is loaded by MelonLoader, not by the Jiangyu loader's folder walk, so it orders by
+    /// <c>[MelonPriority]</c> like any other melon.
+    /// </summary>
+    public bool OrderedByFolderName { get; init; }
 
     /// <summary>Load order for display — empty for kinds without ordering semantics.</summary>
     public string LoadOrderDisplay => LoadOrder?.ToString() ?? string.Empty;
 
     /// <summary>
-    /// Whether this mod's load order can be changed. Only modpacks carry a manifest
-    /// <c>loadOrder</c>. Raw MelonLoader and Jiangyu mods are sequenced by MelonLoader
-    /// itself — a topological sort over the dependency attributes compiled into the
-    /// assembly, then a stable sort by <c>[MelonPriority]</c> — with ties falling back to
+    /// Whether this mod's load order can be changed. Modpacks carry a manifest
+    /// <c>loadOrder</c>; Jiangyu mods carry a numeric folder-name prefix, which the Jiangyu
+    /// loader's ordinal walk of <c>Mods/</c> sorts on. Raw MelonLoader mods are sequenced by
+    /// MelonLoader itself — a topological sort over the dependency attributes compiled into
+    /// the assembly, then a stable sort by <c>[MelonPriority]</c> — with ties falling back to
     /// raw <c>Directory.GetFiles</c> discovery order. All of that is either baked into the
     /// assembly or filesystem-dependent, so no manager can reorder them from outside.
+    ///
+    /// Ordering runs within a kind, never across: a modpack's manifest int and a Jiangyu
+    /// folder prefix are separate sequences applied by separate loaders.
     /// </summary>
-    public bool SupportsLoadOrder => Kind == ModKind.Modpack;
+    public bool SupportsLoadOrder => Kind == ModKind.Modpack || OrderedByFolderName;
 
     /// <summary>Version shown in the UI — includes the Jiangyu target for Jiangyu mods.</summary>
     public string VersionDisplay =>

@@ -83,4 +83,38 @@ namespace JMod { public class Uses { public static object R() => new Jiangyu.Sdk
 
         Assert.Null(MelonModInspector.Inspect(junk));
     }
+
+    [Fact]
+    public void Inspect_MelonPriorityAttribute_ReadsTheValue()
+    {
+        var source = @"
+using System;
+[assembly: MelonLoader.MelonPriorityAttribute(-100)]
+namespace MelonLoader {
+    [AttributeUsage(AttributeTargets.Assembly)]
+    public sealed class MelonPriorityAttribute : Attribute {
+        public MelonPriorityAttribute(int priority = 0) { }
+    }
+}
+namespace MyMod { public class Entry { } }";
+
+        var info = MelonModInspector.Inspect(FixtureAssembly.Emit(_dir, "EarlyMod", source));
+
+        Assert.NotNull(info);
+        Assert.Equal(-100, info!.Priority);
+        Assert.Equal(-100, info.EffectivePriority);
+    }
+
+    [Fact]
+    public void Inspect_WithoutMelonPriority_ReportsTheDefaultMelonLoaderSortsOn()
+    {
+        var source = @"
+namespace MyMod { public class Entry { } }";
+
+        var info = MelonModInspector.Inspect(FixtureAssembly.Emit(_dir, "PlainMod", source));
+
+        Assert.NotNull(info);
+        Assert.Null(info!.Priority);
+        Assert.Equal(0, info.EffectivePriority);
+    }
 }

@@ -38,6 +38,15 @@ public sealed class LoadOrderServiceTests : IDisposable
         return dir;
     }
 
+    private string MakeJiangyuMod(string folder, string name)
+    {
+        var dir = Path.Combine(_modsDir, folder);
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, "jiangyu.json"),
+            $@"{{""name"":""{name}"",""version"":""1.0.0""}}");
+        return dir;
+    }
+
     private ManagedMod Scan(string id) => new ModCatalog(_config).Scan().Single(m => m.Id == id);
 
     private JsonDocument ReadManifest(string dir) =>
@@ -203,5 +212,123 @@ public sealed class LoadOrderServiceTests : IDisposable
         };
 
         Assert.Throws<InvalidOperationException>(() => new LoadOrderService(_config).SetLoadOrder(mod, 10));
+    }
+
+    [Fact]
+    public void SetLoadOrder_RenamesAJiangyuFolderToCarryTheOrder()
+    {
+        MakeJiangyuMod("WOMENACE", "WOMENACE");
+
+        Assert.True(new LoadOrderService(_config).SetLoadOrder(Scan("WOMENACE"), 20));
+
+        Assert.True(Directory.Exists(Path.Combine(_modsDir, "020-WOMENACE")));
+        Assert.False(Directory.Exists(Path.Combine(_modsDir, "WOMENACE")));
+        Assert.Equal(20, Scan("WOMENACE").LoadOrder);
+    }
+
+    [Fact]
+    public void SetLoadOrder_ReplacesAnExistingJiangyuPrefixRatherThanStacking()
+    {
+        MakeJiangyuMod("010-WOMENACE", "WOMENACE");
+
+        Assert.True(new LoadOrderService(_config).SetLoadOrder(Scan("WOMENACE"), 30));
+
+        Assert.True(Directory.Exists(Path.Combine(_modsDir, "030-WOMENACE")));
+        Assert.Single(Directory.GetDirectories(_modsDir));
+    }
+
+    [Fact]
+    public void SetLoadOrder_IsANoOpWhenTheJiangyuFolderAlreadyCarriesTheOrder()
+    {
+        MakeJiangyuMod("040-WOMENACE", "WOMENACE");
+
+        Assert.False(new LoadOrderService(_config).SetLoadOrder(Scan("WOMENACE"), 40));
+    }
+
+    [Fact]
+    public void SetLoadOrder_KeepsTheJiangyuModIdentityAcrossTheRename()
+    {
+        MakeJiangyuMod("WOMENACE", "Womenace Overhaul");
+
+        new LoadOrderService(_config).SetLoadOrder(Scan("Womenace Overhaul"), 10);
+
+        var scanned = Scan("Womenace Overhaul");
+        Assert.Equal("Womenace Overhaul", scanned.DisplayName);
+        Assert.Equal(10, scanned.LoadOrder);
+    }
+
+    [Fact]
+    public void ApplyOrdering_RenumbersJiangyuModsIntoOrdinalFolderOrder()
+    {
+        MakeJiangyuMod("beta", "Beta");
+        MakeJiangyuMod("alpha", "Alpha");
+
+        var service = new LoadOrderService(_config);
+        var mods = new ModCatalog(_config).Scan()
+            .Where(m => m.Kind == ModKind.Jiangyu)
+            .OrderBy(m => m.DisplayName == "Beta" ? 0 : 1)
+            .ToList();
+
+        service.ApplyOrdering(mods);
+
+        // Ordinal folder order is what the loader walks, so it must match the intended order.
+        Assert.Equal(
+            ["010-beta", "020-alpha"],
+            Directory.GetDirectories(_modsDir)
+                .OrderBy(d => d, StringComparer.Ordinal)
+                .Select(d => new DirectoryInfo(d).Name)
+                .ToArray());
+    }
+
+    [Fact]
+    public void SetLoadOrder_RefusesAMelonMod()
+    {
+        var mod = new ManagedMod
+        {
+            Kind = ModKind.MelonMod,
+            Id = "Foo.dll",
+            DisplayName = "Foo",
+            Location = _modsDir,
+        };
+
+        Assert.Throws<InvalidOperationException>(() => new LoadOrderService(_config).SetLoadOrder(mod, 10));
+    }
+
+    [Fact]
+    public void ApplyOrdering_CollapsesStepSpacingWhenTheListWouldOverflowThePrefix()
+    {
+        // 100 mods at Step spacing would ask for 1000, which a 3-digit prefix cannot hold.
+        for (var i = 0; i < 120; i++)
+            MakeJiangyuMod($"mod{i:D3}", $"Mod {i:D3}");
+
+        var mods = new ModCatalog(_config).Scan()
+            .Where(m => m.Kind == ModKind.Jiangyu)
+            .OrderBy(m => m.DisplayName, StringComparer.Ordinal)
+            .ToList();
+
+        new LoadOrderService(_config).ApplyOrdering(mods);
+
+        var folders = Directory.GetDirectories(_modsDir)
+            .Select(d => new DirectoryInfo(d).Name)
+            .OrderBy(n => n, StringComparer.Ordinal)
+            .ToArray();
+
+        Assert.Equal(120, folders.Length);
+        Assert.Equal("001-mod000", folders[0]);
+        Assert.Equal("120-mod119", folders[^1]);
+
+        // Ordinal folder order must still equal the intended order, which is the whole point.
+        Assert.Equal(
+            Enumerable.Range(0, 120).Select(i => $"{i + 1:D3}-mod{i:D3}").ToArray(),
+            folders);
+    }
+
+    [Fact]
+    public void SetLoadOrder_RefusesAnOrderTooLargeForTheFolderPrefix()
+    {
+        MakeJiangyuMod("WOMENACE", "WOMENACE");
+
+        Assert.Throws<ArgumentOutOfRangeException>(
+            () => new LoadOrderService(_config).SetLoadOrder(Scan("WOMENACE"), 1000));
     }
 }

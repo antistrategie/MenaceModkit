@@ -32,19 +32,53 @@ public sealed class LoadOrderService
     public LoadOrderService(IModkitConfig? config = null) => _config = config ?? ModkitConfig.Current;
 
     /// <summary>
-    /// Write <paramref name="order"/> as a modpack's <c>loadOrder</c>. No-op when the
-    /// manifest already holds that value.
+    /// Write <paramref name="order"/> as a mod's load order: a modpack's manifest
+    /// <c>loadOrder</c>, or the numeric prefix on a Jiangyu mod's folder name. No-op when
+    /// the mod already holds that value.
     /// </summary>
-    /// <returns>True if the file was rewritten.</returns>
+    /// <returns>True if something on disk changed.</returns>
     public bool SetLoadOrder(ManagedMod mod, int order)
     {
         ArgumentNullException.ThrowIfNull(mod);
 
-        if (mod.Kind != ModKind.Modpack)
-            throw new InvalidOperationException(
-                $"'{mod.DisplayName}' is not a modpack — only modpacks have a load order. " +
-                "MelonLoader and Jiangyu mods are ordered by the [MelonPriority] compiled into them.");
+        return mod.Kind switch
+        {
+            ModKind.Modpack => SetModpackLoadOrder(mod, order),
+            ModKind.Jiangyu => SetJiangyuLoadOrder(mod, order),
+            _ => throw new InvalidOperationException(
+                $"'{mod.DisplayName}' has no load order. Modpacks carry one in modpack.json and " +
+                "Jiangyu mods carry one in their folder name; MelonLoader mods are ordered by the " +
+                "[MelonPriority] compiled into them."),
+        };
+    }
 
+    /// <summary>
+    /// Rename a Jiangyu mod's folder so it carries <paramref name="order"/> as its prefix.
+    /// The loader walks <c>Mods/</c> in ordinal folder order, and a mod's identity is its
+    /// manifest <c>name</c>, so the folder name is the ordering knob.
+    /// </summary>
+    private bool SetJiangyuLoadOrder(ManagedMod mod, int order)
+    {
+        var location = ValidatedLocation(mod);
+        var parent = Path.GetDirectoryName(location)
+            ?? throw new InvalidOperationException($"'{mod.DisplayName}' has no parent directory.");
+
+        var currentName = new DirectoryInfo(location).Name;
+        var targetName = JiangyuFolderOrder.Compose(order, JiangyuFolderOrder.StripPrefix(currentName));
+        if (string.Equals(currentName, targetName, StringComparison.Ordinal))
+            return false;
+
+        var targetPath = Path.Combine(parent, targetName);
+        if (Directory.Exists(targetPath))
+            throw new IOException(
+                $"Can't reorder '{mod.DisplayName}': '{targetName}' already exists.");
+
+        Directory.Move(location, targetPath);
+        return true;
+    }
+
+    private bool SetModpackLoadOrder(ManagedMod mod, int order)
+    {
         var manifestPath = ManifestPathFor(mod);
         var json = File.ReadAllText(manifestPath);
 
@@ -90,12 +124,20 @@ public sealed class LoadOrderService
         var written = new List<string>();
         var failures = new List<string>();
 
+        // A Jiangyu mod carries its order in a fixed-width folder prefix, which tops out at
+        // JiangyuFolderOrder.MaxOrder. Step spacing collapses to 1 for a list long enough to
+        // run past that, so ordinal folder order still matches the numbers.
+        var step = modpacksInOrder.Any(m => m.OrderedByFolderName)
+                   && modpacksInOrder.Count * Step > JiangyuFolderOrder.MaxOrder
+            ? 1
+            : Step;
+
         for (var i = 0; i < modpacksInOrder.Count; i++)
         {
             var mod = modpacksInOrder[i];
             try
             {
-                if (SetLoadOrder(mod, (i + 1) * Step))
+                if (SetLoadOrder(mod, (i + 1) * step))
                     written.Add(mod.DisplayName);
             }
             catch (Exception ex)
@@ -112,13 +154,16 @@ public sealed class LoadOrderService
         return written;
     }
 
-    private string ManifestPathFor(ManagedMod mod)
+    /// <summary>
+    /// The mod's on-disk folder, confirmed to exist and to sit inside the game's own mod
+    /// directories. A Location pointing anywhere else means the scan root moved under us
+    /// (or a crafted mod name), and neither a manifest write nor a rename may follow it.
+    /// </summary>
+    private string ValidatedLocation(ManagedMod mod)
     {
         if (string.IsNullOrEmpty(mod.Location) || !Directory.Exists(mod.Location))
-            throw new DirectoryNotFoundException($"Modpack no longer exists at '{mod.Location}'.");
+            throw new DirectoryNotFoundException($"'{mod.DisplayName}' no longer exists at '{mod.Location}'.");
 
-        // The manager only ever writes inside the game's own mod directories; a Location
-        // pointing anywhere else means the scan root moved under us (or a crafted mod name).
         var gamePath = _config.GameInstallPath;
         if (string.IsNullOrEmpty(gamePath))
             throw new InvalidOperationException("Game install path is not set.");
@@ -128,7 +173,12 @@ public sealed class LoadOrderService
             throw new InvalidOperationException(
                 $"Refusing to write outside the game's mod folders: '{mod.Location}'.");
 
-        var manifestPath = Path.Combine(mod.Location, "modpack.json");
+        return mod.Location;
+    }
+
+    private string ManifestPathFor(ManagedMod mod)
+    {
+        var manifestPath = Path.Combine(ValidatedLocation(mod), "modpack.json");
         if (!File.Exists(manifestPath))
             throw new FileNotFoundException($"'{mod.DisplayName}' has no modpack.json.", manifestPath);
 

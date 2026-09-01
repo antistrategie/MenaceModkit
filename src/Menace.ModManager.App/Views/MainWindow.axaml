@@ -55,6 +55,9 @@
         <DockPanel>
           <Button DockPanel.Dock="Right" Content="✕" Click="OnDismissWarningClick"
                   Background="Transparent" BorderThickness="0" Foreground="White" Padding="8,0" />
+          <Button DockPanel.Dock="Right" Content="Remove older copy" Click="OnRemoveStaleDuplicatesClick"
+                  IsVisible="{Binding HasStaleDuplicates}" IsEnabled="{Binding !IsBusy}"
+                  Margin="8,0" VerticalAlignment="Center" />
           <TextBlock Text="{Binding WarningMessage}" Foreground="White"
                      TextWrapping="Wrap" VerticalAlignment="Center" />
         </DockPanel>

@@ -111,15 +111,20 @@ public sealed class MainViewModel : ReactiveObject
     public bool HasSelection => Selected is not null;
 
     /// <summary>
-    /// The modpacks in their current display order — the working set for a reorder.
-    /// Disabled ones are included so an order survives a disable/enable round trip.
+    /// The selection's orderable peers in their current display order — the working set for
+    /// a reorder. Disabled ones are included so an order survives a disable/enable round
+    /// trip. Peers share the selection's kind: a modpack's manifest int and a Jiangyu mod's
+    /// folder prefix are separate sequences read by separate loaders, so a move within one
+    /// must not renumber the other.
     /// </summary>
-    private List<ManagedMod> OrderedModpacks =>
-        Mods.Where(m => m.SupportsLoadOrder).ToList();
+    private List<ManagedMod> OrderedPeers =>
+        Selected is { SupportsLoadOrder: true } sel
+            ? Mods.Where(m => m.SupportsLoadOrder && m.Kind == sel.Kind).ToList()
+            : [];
 
-    /// <summary>Index of the selection within <see cref="OrderedModpacks"/>, or -1.</summary>
+    /// <summary>Index of the selection within <see cref="OrderedPeers"/>, or -1.</summary>
     private int SelectedModpackIndex =>
-        Selected is { SupportsLoadOrder: true } sel ? OrderedModpacks.FindIndex(m => m.Id == sel.Id) : -1;
+        Selected is { SupportsLoadOrder: true } sel ? OrderedPeers.FindIndex(m => m.Id == sel.Id) : -1;
 
     public bool CanMoveUp => SelectedModpackIndex > 0;
 
@@ -128,7 +133,7 @@ public sealed class MainViewModel : ReactiveObject
         get
         {
             var i = SelectedModpackIndex;
-            return i >= 0 && i < OrderedModpacks.Count - 1;
+            return i >= 0 && i < OrderedPeers.Count - 1;
         }
     }
 
@@ -414,13 +419,18 @@ public sealed class MainViewModel : ReactiveObject
 
             // Everything filesystem-bound happens off-thread; only the collection and
             // property updates run back on the UI thread.
-            var (ordered, melonInstalled, melonVersion, bundledModpackLoaderVersion) = await Task.Run(() =>
+            var (ordered, melonInstalled, melonVersion, bundledModpackLoaderVersion, duplicates) = await Task.Run(() =>
             {
                 var mods = _catalog.Scan()
                     .OrderBy(m => KindRank(m.Kind))
                     .ThenBy(m => m.LoadOrder ?? int.MaxValue)
+                    // MelonLoader breaks a priority tie on raw file discovery order, which is
+                    // the file name on the platforms the game ships to.
+                    .ThenBy(m => System.IO.Path.GetFileName(m.Location), StringComparer.OrdinalIgnoreCase)
                     .ThenBy(m => m.DisplayName)
                     .ToList();
+
+                var duplicates = DuplicateModDetector.Find(mods);
 
                 var installed = false;
                 string? version = null;
@@ -437,7 +447,7 @@ public sealed class MainViewModel : ReactiveObject
                 // available when it's newer than what's in Mods/.
                 var bundledLoader = ModLoaderInstaller.GetBundledModpackLoaderVersion();
 
-                return (mods, installed, version, bundledLoader);
+                return (mods, installed, version, bundledLoader, duplicates);
             });
 
             Mods.Clear();
@@ -453,6 +463,11 @@ public sealed class MainViewModel : ReactiveObject
                 foreach (var mod in group)
                     Rows.Add(mod);
             }
+
+            _duplicates = duplicates;
+            this.RaisePropertyChanged(nameof(HasStaleDuplicates));
+            if (duplicates.Count > 0)
+                WarningMessage = string.Join("\n\n", duplicates.Select(d => d.Describe()));
 
             if (_reselectId is { } reselect)
             {
@@ -626,7 +641,7 @@ public sealed class MainViewModel : ReactiveObject
     /// </summary>
     public void MoveSelected(int delta)
     {
-        var modpacks = OrderedModpacks;
+        var modpacks = OrderedPeers;
         var index = SelectedModpackIndex;
         var target = index + delta;
         if (index < 0 || target < 0 || target >= modpacks.Count)
@@ -786,6 +801,34 @@ public sealed class MainViewModel : ReactiveObject
             ? "installed anyway, the scan is advisory only"
             : "found before the install failed";
         return $"{modName}: {count} in its C# source ({outcome}):\n{body}";
+    }
+
+    /// <summary>
+    /// Duplicate manifest names found by the last scan. Kept so the banner's action knows
+    /// which copies to drop without re-walking the disk.
+    /// </summary>
+    private IReadOnlyList<DuplicateModGroup> _duplicates = [];
+
+    /// <summary>Whether the last scan found a duplicate with a copy that can be removed.</summary>
+    public bool HasStaleDuplicates => _duplicates.Any(d => d.Stale.Count > 0);
+
+    /// <summary>
+    /// Delete the older copy of every duplicated mod, leaving the most recently written one.
+    /// </summary>
+    public Task RemoveStaleDuplicatesAsync()
+    {
+        var stale = _duplicates.SelectMany(d => d.Stale).Where(m => m.CanToggle).ToList();
+        if (stale.Count == 0)
+            return Task.CompletedTask;
+
+        var label = stale.Count == 1 ? "1 duplicate copy" : $"{stale.Count} duplicate copies";
+        return ExecuteAsync(
+            $"Removing {label}…",
+            () => Task.Run(() =>
+            {
+                foreach (var mod in stale)
+                    _installService.Uninstall(mod);
+            }));
     }
 
     /// <summary>Delete the selected mod from disk.</summary>
