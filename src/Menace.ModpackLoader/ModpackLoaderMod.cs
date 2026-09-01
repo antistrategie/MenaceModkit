@@ -29,6 +29,10 @@ using UnityEngine;
     "Newtonsoft.Json",
     "SharpGLTF.Core")]
 
+// MelonLoader registers melons in ascending priority order, with content mods defaulting
+// to 0. The modpack loader follows the Jiangyu loader (-100).
+[assembly: MelonPriority(-90)]
+
 namespace Menace.ModpackLoader;
 
 public partial class ModpackLoaderMod : MelonMod
