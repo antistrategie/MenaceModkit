@@ -150,3 +150,7 @@ Output will be in `dist/`.
 - Unverified DLLs require explicit user approval
 
 See [Security Policy](docs/system-guide/SECURITY.md) for the security policy and reporting process.
+
+## Updating for a game patch
+
+The DataExtractor reads template fields through offsets baked into `generated/schema.json`, so every MENACE patch that moves fields makes extraction hang or crash until the schema is regenerated. `tools/update-for-game-patch.sh` does the whole chain: Il2CppDumper on the installed build → `tools/generate_schema.py` → `extract_eventhandlers.py` → `tools/carry_handler_descriptions.py` (keeps the hand-written handler field descriptions) → `tools/diff_schemas.py` report → install the schema → rebuild the extractor and loader → deploy the extractor with the force flag and launch the game, which extracts from the title screen without a prompt. Run it with `--help` for the paths it expects; a rebuilt `third_party/bundled/DataExtractor/Menace.DataExtractor.dll` embeds the new schema.
